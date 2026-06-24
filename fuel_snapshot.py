@@ -58,12 +58,21 @@ USER_AGENT = "fuel-fairness-research/0.1 (CHANGE_ME@example.com)"
 
 
 def get_token(client_id: str, client_secret: str) -> str:
-    """Exchange client credentials for a short-lived access token."""
+    """Exchange client credentials for a short-lived access token.
+
+    Uses the format documented by Fuel Finder: form-encoded body with
+    grant_type and scope, not JSON.
+    """
     resp = requests.post(
         f"{BASE_URL}{TOKEN_ENDPOINT}",
-        json={"client_id": client_id, "client_secret": client_secret},
+        data={
+            "grant_type": "client_credentials",
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "scope": "fuelfinder.read",
+        },
         headers={
-            "Content-Type": "application/json",
+            "Content-Type": "application/x-www-form-urlencoded",
             "Accept": "application/json",
             "User-Agent": USER_AGENT,
         },
