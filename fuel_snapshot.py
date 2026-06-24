@@ -1,0 +1,180 @@
+"""
+Fuel Finder snapshot logger.
+
+Pulls station details and fuel prices from the UK Government Fuel Finder API
+and writes a timestamped, gzipped RAW JSON snapshot for each. Run it on a
+schedule to build the price history your project depends on.
+
+Credentials are read from environment variables. Never hard-code them and
+never commit them:
+    FUEL_FINDER_CLIENT_ID
+    FUEL_FINDER_CLIENT_SECRET
+
+Why raw JSON snapshots: this is your "bronze" layer. Storing exactly what the
+API returned, untouched, means you can re-parse it any way you like later
+without ever needing to re-pull. You will build the tidy tables (Parquet,
+DuckDB) on top of this, in a separate step.
+
+Run:
+    pip install requests
+    export FUEL_FINDER_CLIENT_ID=...        # do not paste these into code
+    export FUEL_FINDER_CLIENT_SECRET=...
+    python fuel_snapshot.py
+"""
+from __future__ import annotations
+
+import gzip
+import json
+import os
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+import requests
+
+BASE_URL = "https://www.fuel-finder.service.gov.uk"
+TOKEN_ENDPOINT = "/api/v1/oauth/generate_access_token"
+ENDPOINTS = {
+    "pfs": "/api/v1/pfs",                  # station details (changes rarely)
+    "prices": "/api/v1/pfs/fuel-prices",   # fuel prices (changes often)
+}
+
+# --- Decisions you own (sensible starting values) ----------------------------
+DATA_DIR = Path("data/raw")          # where snapshots land; your call on layout
+REQUEST_GAP_SECONDS = 2.1            # politeness gap between calls
+REQUEST_TIMEOUT = 30
+MAX_BATCHES = 300                    # safety stop so a bug cannot loop forever
+# Set a real contact so the service can reach you rather than just blocking you.
+USER_AGENT = "fuel-fairness-research/0.1 (CHANGE_ME@example.com)"
+# -----------------------------------------------------------------------------
+
+
+def get_token(client_id: str, client_secret: str) -> str:
+    """Exchange client credentials for a short-lived access token."""
+    resp = requests.post(
+        f"{BASE_URL}{TOKEN_ENDPOINT}",
+        json={"client_id": client_id, "client_secret": client_secret},
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": USER_AGENT,
+        },
+        timeout=REQUEST_TIMEOUT,
+    )
+    resp.raise_for_status()
+    payload = resp.json()
+    data = payload.get("data") if isinstance(payload, dict) else None
+    token = (data or payload or {}).get("access_token")
+    if not token:
+        raise RuntimeError(f"No access_token in token response: {payload!r}")
+    return token
+
+
+def fetch_all_batches(endpoint: str, token: str) -> list:
+    """Page through a resource using the batch-number param until exhausted."""
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+        "User-Agent": USER_AGENT,
+    }
+    records: list = []
+    seen_signatures: set = set()
+
+    for batch in range(1, MAX_BATCHES + 1):
+        resp = requests.get(
+            f"{BASE_URL}{endpoint}",
+            params={"batch-number": batch},
+            headers=headers,
+            timeout=REQUEST_TIMEOUT,
+        )
+
+        if resp.status_code == 404 and batch > 1:
+            break  # past the last page
+
+        if resp.status_code == 429:
+            wait = float(resp.headers.get("Retry-After", 5))
+            print(f"  rate limited on batch {batch}, waiting {wait}s")
+            time.sleep(wait)
+            continue
+
+        resp.raise_for_status()
+        rows = _records_from_payload(resp.json())
+        if not rows:
+            break
+
+        # Guard against an API that keeps returning the same page.
+        signature = json.dumps(rows[0], sort_keys=True)[:300]
+        if signature in seen_signatures:
+            break
+        seen_signatures.add(signature)
+
+        records.extend(rows)
+        time.sleep(REQUEST_GAP_SECONDS)
+
+    return records
+
+
+def _records_from_payload(payload) -> list:
+    """Find the list of record dicts inside the API's response wrapper.
+
+    The exact wrapper key is not officially documented, so this checks the
+    common ones and then falls back to the first list-of-dicts it finds.
+    After your first run, look at a raw snapshot and tighten this if needed.
+    """
+    if isinstance(payload, list):
+        return [r for r in payload if isinstance(r, dict)]
+    if isinstance(payload, dict):
+        for key in ("data", "results", "items", "records", "pfs", "fuel_prices"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                return [r for r in value if isinstance(r, dict)]
+        for value in payload.values():
+            if isinstance(value, list) and value and isinstance(value[0], dict):
+                return value
+    return []
+
+
+def save_snapshot(name: str, records: list, ts: datetime) -> Path:
+    """Write a gzipped JSON snapshot, partitioned by UTC date."""
+    day = ts.strftime("%Y-%m-%d")
+    stamp = ts.strftime("%Y%m%dT%H%M%SZ")
+    out_dir = DATA_DIR / name / day
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / f"{name}_{stamp}.json.gz"
+    with gzip.open(out_path, "wt", encoding="utf-8") as f:
+        json.dump(
+            {"pulled_at": ts.isoformat(), "count": len(records), "records": records},
+            f,
+        )
+    return out_path
+
+
+def main() -> int:
+    client_id = os.environ.get("FUEL_FINDER_CLIENT_ID")
+    client_secret = os.environ.get("FUEL_FINDER_CLIENT_SECRET")
+    if not client_id or not client_secret:
+        print(
+            "Set FUEL_FINDER_CLIENT_ID and FUEL_FINDER_CLIENT_SECRET first.",
+            file=sys.stderr,
+        )
+        return 1
+
+    ts = datetime.now(timezone.utc)
+    token = get_token(client_id, client_secret)
+    print("Got access token.")
+
+    exit_code = 0
+    for name, endpoint in ENDPOINTS.items():
+        records = fetch_all_batches(endpoint, token)
+        if not records:
+            print(f"WARNING: {name} returned no records", file=sys.stderr)
+            exit_code = 2
+            continue
+        path = save_snapshot(name, records, ts)
+        print(f"{name}: saved {len(records)} records -> {path}")
+    return exit_code
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
