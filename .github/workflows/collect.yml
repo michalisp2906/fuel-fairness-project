@@ -17,6 +17,13 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install requests
+      - name: Check secret lengths (temporary)
+        run: |
+          echo "id length: ${#FUEL_FINDER_CLIENT_ID}"
+          echo "secret length: ${#FUEL_FINDER_CLIENT_SECRET}"
+        env:
+          FUEL_FINDER_CLIENT_ID: ${{ secrets.FUEL_FINDER_CLIENT_ID }}
+          FUEL_FINDER_CLIENT_SECRET: ${{ secrets.FUEL_FINDER_CLIENT_SECRET }}
       - name: Pull snapshot
         env:
           FUEL_FINDER_CLIENT_ID: ${{ secrets.FUEL_FINDER_CLIENT_ID }}
