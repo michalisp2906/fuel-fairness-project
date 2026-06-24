@@ -53,7 +53,7 @@ TRANSIENT_STATUS = {429, 500, 502, 503, 504}
 MAX_TRANSIENT_RETRIES = 4            # attempts after the first try, then give up
 RETRY_WAIT_SECONDS = 5              # base wait; grows with each retry
 # Set a real contact so the service can reach you rather than just blocking you.
-USER_AGENT = "fuel-fairness-research/0.1 (CHANGE_ME@example.com)"
+USER_AGENT = "fuel-fairness-research/0.1 (m.papamichael29@gmail.com)"
 # -----------------------------------------------------------------------------
 
 

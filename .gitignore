@@ -1,0 +1,16 @@
+# Virtual environment
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Credentials, if you ever use a .env file
+.env
+
+# Collection logs
+logs/
+
+# OS noise
+Thumbs.db
+.DS_Store
