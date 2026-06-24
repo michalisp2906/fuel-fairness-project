@@ -45,6 +45,13 @@ DATA_DIR = Path("data/raw")          # where snapshots land; your call on layout
 REQUEST_GAP_SECONDS = 2.1            # politeness gap between calls
 REQUEST_TIMEOUT = 30
 MAX_BATCHES = 300                    # safety stop so a bug cannot loop forever
+
+# Transient errors (rate limit + temporary server faults) get retried rather
+# than crashing the whole snapshot. One server hiccup should not leave a hole
+# in your history.
+TRANSIENT_STATUS = {429, 500, 502, 503, 504}
+MAX_TRANSIENT_RETRIES = 4            # attempts after the first try, then give up
+RETRY_WAIT_SECONDS = 5              # base wait; grows with each retry
 # Set a real contact so the service can reach you rather than just blocking you.
 USER_AGENT = "fuel-fairness-research/0.1 (CHANGE_ME@example.com)"
 # -----------------------------------------------------------------------------
@@ -82,26 +89,9 @@ def fetch_all_batches(endpoint: str, token: str) -> list:
     seen_signatures: set = set()
 
     for batch in range(1, MAX_BATCHES + 1):
-        resp = requests.get(
-            f"{BASE_URL}{endpoint}",
-            params={"batch-number": batch},
-            headers=headers,
-            timeout=REQUEST_TIMEOUT,
-        )
-
-        if resp.status_code == 404 and batch > 1:
-            break  # past the last page
-
-        if resp.status_code == 429:
-            wait = float(resp.headers.get("Retry-After", 5))
-            print(f"  rate limited on batch {batch}, waiting {wait}s")
-            time.sleep(wait)
-            continue
-
-        resp.raise_for_status()
-        rows = _records_from_payload(resp.json())
+        rows = _fetch_one_batch(endpoint, batch, headers)
         if not rows:
-            break
+            break  # 404 or empty page: past the last page of data
 
         # Guard against an API that keeps returning the same page.
         signature = json.dumps(rows[0], sort_keys=True)[:300]
@@ -113,6 +103,43 @@ def fetch_all_batches(endpoint: str, token: str) -> list:
         time.sleep(REQUEST_GAP_SECONDS)
 
     return records
+
+
+def _fetch_one_batch(endpoint: str, batch: int, headers: dict) -> list | None:
+    """Fetch a single batch, retrying transient errors.
+
+    Returns the list of records, or None to signal "stop paging" (a 404 or an
+    empty page). A transient error (rate limit or temporary server fault) is
+    retried with a growing wait; only if it persists past the retry budget does
+    it raise and stop the run.
+    """
+    for attempt in range(1, MAX_TRANSIENT_RETRIES + 2):  # first try + retries
+        resp = requests.get(
+            f"{BASE_URL}{endpoint}",
+            params={"batch-number": batch},
+            headers=headers,
+            timeout=REQUEST_TIMEOUT,
+        )
+
+        if resp.status_code == 404 and batch > 1:
+            return None  # past the last page
+
+        if resp.status_code in TRANSIENT_STATUS:
+            if attempt > MAX_TRANSIENT_RETRIES:
+                resp.raise_for_status()  # out of retries, let it fail loudly
+            wait = float(resp.headers.get("Retry-After", RETRY_WAIT_SECONDS * attempt))
+            print(
+                f"  transient {resp.status_code} on batch {batch}, "
+                f"retry {attempt}/{MAX_TRANSIENT_RETRIES} after {wait:.0f}s"
+            )
+            time.sleep(wait)
+            continue  # retry the SAME batch
+
+        resp.raise_for_status()
+        rows = _records_from_payload(resp.json())
+        return rows or None  # empty list also means stop paging
+
+    return None
 
 
 def _records_from_payload(payload) -> list:
