@@ -43,7 +43,7 @@ picture and phase order.
 - Windows, PowerShell (not bash). Terminal commands must be PowerShell syntax.
 - Python in the project virtual environment at `.venv`.
 - Editor is VS Code.
-- Dependencies so far: requests.
+- Dependencies so far: requests, pandas, pyarrow, numpy.
 
 ## Data source: Fuel Finder API (reverse-engineered, official docs are bot-walled)
 - Base URL: `https://www.fuel-finder.service.gov.uk`
@@ -93,7 +93,12 @@ picture and phase order.
 - All project files committed (.gitignore, CLAUDE.md, fuel-overcharging-project-plan.md,
   run_collection.ps1, setup_scheduler.ps1, fuel_snapshot.py). logs/ in .gitignore.
 - DONE: collection pipeline fully operational. History accumulating from 2026-06-24.
-- NEXT: build the bronze-to-silver pipeline: parse gzipped snapshots into a tidy
-  Parquet/DuckDB time series, deduplicated on (node_id, price_change_effective_timestamp).
+- DONE: bronze-to-silver pipeline (`build_silver.py`). Produces
+  `data/silver/prices_silver.parquet`: one row per unique price-change event,
+  joined to station details from the nearest PFS snapshot in time.
+  29,318 events across 7,969 stations as of 2026-06-25.
+- NEXT: exploratory data analysis on the silver layer. Understand price
+  distributions, brand patterns, and the shape of price-change events before
+  modelling.
 - No modelling started yet. Still in the data collection phase.
 
