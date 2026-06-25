@@ -11,6 +11,9 @@ __pycache__/
 # Collection logs
 logs/
 
+# Derived data (regenerate with build_silver.py)
+data/silver/
+
 # OS noise
 Thumbs.db
 .DS_Store
