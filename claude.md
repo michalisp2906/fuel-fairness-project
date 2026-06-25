@@ -24,6 +24,16 @@ picture and phase order.
 - Prefer simple, readable solutions over clever ones.
 - I am learning, so favour clarity and tell me why, not just what.
 
+## Working philosophy:
+- Plan before you act. State your approach explicitly before writing code.
+- Log every assumption. If you're not certain, say so and ask.
+- Treat your first solution as a draft. Actively look for flaws before presenting it.
+- If you believe the requested approach is wrong or suboptimal, say so first.
+  Propose an alternative. Do not silently implement something you'd improve.
+- Before calling a task complete, verify your output against the original
+  requirement step by step. List what you checked.
+- Precision over speed. A slower, correct answer beats a fast, plausible one.
+
 ## Writing style
 - Plain punctuation only. Never use em dashes or en dashes. Use commas, periods,
   colons, parentheses.
@@ -55,8 +65,8 @@ picture and phase order.
 - Canonical price unit: pence per litre.
 - Storage: raw gzipped JSON snapshots are the immutable "bronze" layer in `data/raw/`,
   partitioned by date. Tidy tables (Parquet, DuckDB) get built on top, not in place of.
-- Collection will run LOCALLY via Windows Task Scheduler. The API refuses data-centre
-  IPs, so cloud collection (GitHub Actions, etc.) is abandoned. NOT YET SET UP.
+- Collection runs LOCALLY via Windows Task Scheduler. The API refuses data-centre
+  IPs, so cloud collection (GitHub Actions, etc.) is abandoned.
 - Known limitation: PC runs weekdays ~9 to 5, so collection misses nights, weekends,
   and holidays. This is a deliberate, documented sampling gap.
 
@@ -76,13 +86,14 @@ picture and phase order.
 - `run_collection.ps1` loads `.env`, runs the collector, commits and pushes. Tested
   end to end: 7983 PFS records and 7968 price records collected and pushed on first
   clean run (2026-06-24).
-- `setup_scheduler.ps1` registers the Task Scheduler task. Already run: task
-  `FuelFinderSnapshot` is live, Mon-Fri at 09:00, 11:30, 14:00, 16:30.
+- `setup_scheduler.ps1` registers the Task Scheduler task. Task `FuelFinderSnapshot`
+  is live, Mon-Fri at 09:00, 11:30, 14:00, 16:30.
 - `.env` confirmed gitignored and not tracked by git.
+- Dead `.github/workflows/collect.yml` cloud workflow removed.
+- All project files committed (.gitignore, CLAUDE.md, fuel-overcharging-project-plan.md,
+  run_collection.ps1, setup_scheduler.ps1, fuel_snapshot.py). logs/ in .gitignore.
 - DONE: collection pipeline fully operational. History accumulating from 2026-06-24.
-- NOT DONE: remove the dead `.github/workflows/collect.yml` cloud workflow.
-- NOT DONE: commit the untracked project files (.gitignore, CLAUDE.md,
-  fuel-overcharging-project-plan.md, run_collection.ps1, setup_scheduler.ps1,
-  fuel_snapshot.py user-agent change). Add logs/ to .gitignore first.
+- NEXT: build the bronze-to-silver pipeline: parse gzipped snapshots into a tidy
+  Parquet/DuckDB time series, deduplicated on (node_id, price_change_effective_timestamp).
 - No modelling started yet. Still in the data collection phase.
 
