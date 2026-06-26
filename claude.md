@@ -43,7 +43,7 @@ picture and phase order.
 - Windows, PowerShell (not bash). Terminal commands must be PowerShell syntax.
 - Python in the project virtual environment at `.venv`.
 - Editor is VS Code.
-- Dependencies so far: requests, pandas, pyarrow, numpy.
+- Dependencies declared in `pyproject.toml`, managed with `uv`. Run `uv sync --group notebook` to reproduce the environment. `uv.lock` is committed.
 
 ## Data source: Fuel Finder API (reverse-engineered, official docs are bot-walled)
 - Base URL: `https://www.fuel-finder.service.gov.uk`
