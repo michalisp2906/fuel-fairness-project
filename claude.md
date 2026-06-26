@@ -81,24 +81,26 @@ picture and phase order.
 - GitHub: https://github.com/michalisp2906/fuel-fairness-project
 
 ## Current status and next steps
-- Ingestion script (`fuel_snapshot.py`) works locally: authenticates and saves both
-  station and price snapshots.
-- `run_collection.ps1` loads `.env`, runs the collector, commits and pushes. Tested
-  end to end: 7983 PFS records and 7968 price records collected and pushed on first
-  clean run (2026-06-24).
-- `setup_scheduler.ps1` registers the Task Scheduler task. Task `FuelFinderSnapshot`
-  is live, Mon-Fri at 09:00, 11:30, 14:00, 16:30.
-- `.env` confirmed gitignored and not tracked by git.
-- Dead `.github/workflows/collect.yml` cloud workflow removed.
-- All project files committed (.gitignore, CLAUDE.md, fuel-overcharging-project-plan.md,
-  run_collection.ps1, setup_scheduler.ps1, fuel_snapshot.py). logs/ in .gitignore.
-- DONE: collection pipeline fully operational. History accumulating from 2026-06-24.
+- DONE: collection pipeline fully operational. Task `FuelFinderSnapshot` runs
+  Mon-Fri at 09:00, 11:30, 14:00, 16:30 via Windows Task Scheduler.
+  History accumulating from 2026-06-24.
 - DONE: bronze-to-silver pipeline (`build_silver.py`). Produces
   `data/silver/prices_silver.parquet`: one row per unique price-change event,
   joined to station details from the nearest PFS snapshot in time.
-  29,318 events across 7,969 stations as of 2026-06-25.
-- NEXT: exploratory data analysis on the silver layer. Understand price
-  distributions, brand patterns, and the shape of price-change events before
-  modelling.
-- No modelling started yet. Still in the data collection phase.
+  36,469 events across 7,967 stations as of 2026-06-26.
+- DONE: silver cleaning step (in `build_silver.py`, `clean_silver()`):
+  - Price outliers outside [50p, 300p] dropped (24 records, likely data entry errors).
+  - Brand names normalised: title-case, BP acronym preserved, compound brands
+    (BP Harvest Energy, EG On The Move) corrected, apostrophe capitalisation fixed,
+    unbranded variants consolidated to "Unbranded", data errors nulled out.
+  - Country normalised to 5 canonical values: England, Scotland, Wales,
+    Northern Ireland, UK Other. Postcode prefix used to resolve ambiguous values
+    (UNITED KINGDOM, UK, empty, NaN). Only 26 rows remain as UK Other.
+  - QC check uses latitude.isna() (not brand_name) to detect unmatched PFS records.
+- DONE: initial EDA notebook (`eda.ipynb`). Covers grade coverage, price
+  distributions, brand patterns, station type, price staleness, regional
+  patterns, diesel-petrol spread. Needs a re-run against the cleaned silver data.
+- NEXT: re-run eda.ipynb against the cleaned silver layer, then begin the
+  fair-price model (Phase 2 in the roadmap).
+- No modelling started yet. Still in the data collection and cleaning phase.
 
