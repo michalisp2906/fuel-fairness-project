@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import re
 import warnings
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,6 +33,52 @@ QC_DIR = SILVER_DIR / "qc"
 SILVER_OUT = SILVER_DIR / "prices_silver.parquet"
 
 KNOWN_FUEL_GRADES = {"E10", "E5", "B7_STANDARD", "B7_PREMIUM", "B10", "HVO"}
+
+# --- Cleaning constants -------------------------------------------------------
+
+PRICE_MIN_PPL = 50.0
+PRICE_MAX_PPL = 300.0
+
+# Brand names that mean "no brand" in any capitalisation.
+_UNBRANDED_ALIASES = frozenset({
+    "n/a", "none", "no brand", "no brand name", "no brand dispayed",
+    "no brand displayed", "not branded", "unbranded", "independent",
+    "independant",
+})
+
+# Values in the brand_name field that are clearly data errors, not brand names.
+_BRAND_NULL_VALUES = frozenset({"8520231"})
+
+# Title-cased brand names that need a manual fix after normalisation.
+# Covers acronyms embedded in compound names and known data typos.
+_BRAND_CORRECTIONS: dict[str, str] = {
+    "Independant":       "Independent",
+    "Bp Harvest Energy": "BP Harvest Energy",
+    "Eg On The Move":    "EG On The Move",
+}
+
+# Postcode area codes that uniquely identify Scotland, Wales, Northern Ireland.
+# Everything else is England. "S" (Sheffield) is England, not Scotland.
+_SCOTTISH_AREAS = frozenset({
+    "AB", "DD", "DG", "EH", "FK", "G", "HS", "IV", "KA", "KW", "KY",
+    "ML", "PA", "PH", "TD", "ZE",
+})
+_WELSH_AREAS = frozenset({"CF", "LD", "LL", "NP", "SA"})
+_NI_AREAS = frozenset({"BT"})
+
+# Lowercase country strings from the API that map directly to a canonical name.
+_COUNTRY_CANONICAL = {
+    "england": "England",
+    "e":       "England",
+    "scotland": "Scotland",
+    "s":        "Scotland",
+    "wales":    "Wales",
+    "w":        "Wales",
+    "northern ireland": "Northern Ireland",
+    "n":                "Northern Ireland",
+}
+
+# ------------------------------------------------------------------------------
 
 
 def load_snapshot(path: Path) -> tuple[pd.Timestamp, list[dict]]:
@@ -58,19 +105,19 @@ def load_all_pfs() -> pd.DataFrame:
         for r in records:
             loc = r.get("location") or {}
             rows.append({
-                "node_id":                       r["node_id"],
-                "brand_name":                    r.get("brand_name"),
-                "trading_name":                  r.get("trading_name"),
-                "is_motorway_service_station":   r.get("is_motorway_service_station"),
+                "node_id":                        r["node_id"],
+                "brand_name":                     r.get("brand_name"),
+                "trading_name":                   r.get("trading_name"),
+                "is_motorway_service_station":    r.get("is_motorway_service_station"),
                 "is_supermarket_service_station": r.get("is_supermarket_service_station"),
-                "temporary_closure":             r.get("temporary_closure"),
-                "permanent_closure":             r.get("permanent_closure"),
-                "postcode":                      loc.get("postcode"),
-                "latitude":                      loc.get("latitude"),
-                "longitude":                     loc.get("longitude"),
-                "city":                          loc.get("city"),
-                "county":                        loc.get("county"),
-                "country":                       loc.get("country"),
+                "temporary_closure":              r.get("temporary_closure"),
+                "permanent_closure":              r.get("permanent_closure"),
+                "postcode":                       loc.get("postcode"),
+                "latitude":                       loc.get("latitude"),
+                "longitude":                      loc.get("longitude"),
+                "city":                           loc.get("city"),
+                "county":                         loc.get("county"),
+                "country":                        loc.get("country"),
             })
         df = pd.DataFrame(rows)
         df["pfs_pulled_at"] = pulled_at
@@ -213,6 +260,87 @@ def assign_nearest_pfs_snapshot(
     )
 
 
+def _normalize_brand(raw) -> str | None:
+    if pd.isna(raw):
+        return None
+    s = str(raw).strip()
+    if not s or s in _BRAND_NULL_VALUES:
+        return None
+    # Catch all variants of "BP" before title-casing (strips spaces, compares uppercase).
+    if re.sub(r"\s+", "", s).upper() == "BP":
+        return "BP"
+    # Consolidate all "no brand" variants regardless of capitalisation.
+    if s.lower() in _UNBRANDED_ALIASES:
+        return "Unbranded"
+    s = s.title()
+    # .title() capitalises after apostrophes: "Sainsbury'S" -> "Sainsbury's"
+    s = re.sub(r"'([A-Z])", lambda m: "'" + m.group(1).lower(), s)
+    return _BRAND_CORRECTIONS.get(s, s)
+
+
+def _postcode_to_nation(postcode) -> str | None:
+    """Infer the UK constituent nation from a postcode area prefix."""
+    if pd.isna(postcode) or not postcode:
+        return None
+    m = re.match(r"^([A-Za-z]+)", str(postcode).strip().upper())
+    if not m:
+        return None
+    area = m.group(1)
+    if area in _NI_AREAS:
+        return "Northern Ireland"
+    if area in _SCOTTISH_AREAS:
+        return "Scotland"
+    if area in _WELSH_AREAS:
+        return "Wales"
+    return "England"
+
+
+def _normalize_country(raw_country, postcode) -> str:
+    """
+    Return a canonical nation name.
+    Known values (ENGLAND, E, Scotland, etc.) are mapped directly.
+    Unknown or missing values (UNITED KINGDOM, UK, empty, NaN) fall back to
+    postcode inference, then "UK Other" if the postcode is also missing.
+    """
+    if not pd.isna(raw_country):
+        s = str(raw_country).strip().lower()
+        if s in _COUNTRY_CANONICAL:
+            return _COUNTRY_CANONICAL[s]
+    nation = _postcode_to_nation(postcode)
+    return nation if nation else "UK Other"
+
+
+def clean_silver(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Apply three cleaning steps to the enriched silver dataframe:
+      1. Drop price events outside the plausible range [50p, 300p].
+      2. Normalise brand_name: title-case, consolidate unbranded variants,
+         preserve acronyms (BP), fix known typos.
+      3. Normalise country: canonical names for known values; postcode
+         inference for UNITED KINGDOM / UK / empty / NaN; "UK Other" if
+         the postcode is also missing.
+    """
+    df = df.copy()
+
+    # 1. Price outliers
+    before = len(df)
+    df = df[(df["price_ppl"] >= PRICE_MIN_PPL) & (df["price_ppl"] <= PRICE_MAX_PPL)]
+    n_dropped = before - len(df)
+    if n_dropped:
+        print(f"  Dropped {n_dropped} price events outside "
+              f"[{PRICE_MIN_PPL:.0f}p, {PRICE_MAX_PPL:.0f}p] as implausible")
+
+    # 2. Brand names
+    df["brand_name"] = df["brand_name"].map(_normalize_brand)
+
+    # 3. Country
+    df["country"] = df.apply(
+        lambda r: _normalize_country(r["country"], r["postcode"]), axis=1
+    )
+
+    return df
+
+
 def main() -> None:
     SILVER_DIR.mkdir(parents=True, exist_ok=True)
     QC_DIR.mkdir(parents=True, exist_ok=True)
@@ -244,8 +372,9 @@ def main() -> None:
         how="left",
     ).drop(columns=["pfs_pulled_at"])
 
-    # QC: price events with no PFS match cannot be modelled and must be flagged.
-    no_pfs_match = enriched["brand_name"].isna()
+    # QC: use latitude (not brand_name) to detect a missing PFS record, because
+    # brand_name can legitimately be null for unbranded stations.
+    no_pfs_match = enriched["latitude"].isna()
     if no_pfs_match.any():
         n = no_pfs_match.sum()
         print(f"  WARNING: {n} price events have no matching PFS station record.")
@@ -258,6 +387,9 @@ def main() -> None:
         print(f"  Written to: {qc_path}")
     else:
         print("  All price events matched to a PFS record.")
+
+    print("Cleaning silver layer...")
+    enriched = clean_silver(enriched)
 
     col_order = [
         "node_id", "fuel_type", "price_ppl",
@@ -279,6 +411,14 @@ def main() -> None:
     print(f"  Fuel types:      {sorted(enriched['fuel_type'].dropna().unique())}")
     ts = enriched["price_change_effective_timestamp"]
     print(f"  Date range:      {ts.min()} to {ts.max()}")
+    print(f"  Countries:       {sorted(enriched['country'].dropna().unique())}")
+    top_brands = (
+        enriched[enriched["fuel_type"] == "E10"]
+        .groupby("brand_name", dropna=False)["node_id"]
+        .nunique()
+        .nlargest(5)
+    )
+    print(f"  Top 5 brands (E10 stations):\n{top_brands.to_string()}")
 
 
 if __name__ == "__main__":
