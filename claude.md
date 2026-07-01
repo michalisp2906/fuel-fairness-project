@@ -40,10 +40,18 @@ picture and phase order.
 - No corporate filler.
 
 ## Environment
-- Windows, PowerShell (not bash). Terminal commands must be PowerShell syntax.
-- Python in the project virtual environment at `.venv`.
+- Two machines, two roles. Collection (`fuel_snapshot.py`, Task Scheduler) runs
+  ONLY on the Windows PC, because the API blocks data-centre IPs and the scheduled
+  task needs a residential IP. Do not move collection to the Mac or any cloud runner.
+- Windows PC: Windows, PowerShell (not bash). Terminal commands must be PowerShell
+  syntax. Runs collection plus any development work done there.
+- MacBook Pro: zsh/bash. Used for analysis and development (`build_silver.py`,
+  `eda.ipynb`, modelling). Has no `.env`, so it cannot run live collection; it
+  works from the raw snapshots synced via git. Terminal commands here are bash/zsh,
+  not PowerShell.
+- Python in the project virtual environment at `.venv` (machine-local, not synced).
 - Editor is VS Code.
-- Dependencies declared in `pyproject.toml`, managed with `uv`. Run `uv sync --group notebook` to reproduce the environment. `uv.lock` is committed.
+- Dependencies declared in `pyproject.toml`, managed with `uv`. Run `uv sync --group notebook` to reproduce the environment on either machine. `uv.lock` is committed.
 
 ## Data source: Fuel Finder API (reverse-engineered, official docs are bot-walled)
 - Base URL: `https://www.fuel-finder.service.gov.uk`
