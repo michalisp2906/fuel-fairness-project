@@ -88,6 +88,37 @@ picture and phase order.
 ## Repo
 - GitHub: https://github.com/michalisp2906/fuel-fairness-project
 
+## Fuel duty rate (critical: do not use the wrong figure)
+- Duty was cut from 57.95p to 52.95p/litre on 28 March 2022 and has remained
+  at 52.95p since. The DESNZ CSV confirms this. Do NOT use 57.95p.
+- VAT remains 20%, applied on top of duty-inclusive price.
+
+## Fair-price model definitions (locked, see project_definition.md for full detail)
+- Signal 1 (cost-plus): fair price = (wholesale + duty + fair_margin) * 1.2
+  Fair margin = 7p/litre (CMA pre-2022 baseline; CMA says current ~10.7p is excessive).
+- Signal 2 (peer-relative): LightGBM trained on Signal 1 residuals with competition
+  and location features (house price index, rural-urban classification, rival counts).
+- Combined flag: Signal 1 is the primary YES/NO. Signal 2 ranks within flagged group.
+  Signal 1 high + Signal 2 low = local market problem, flag all. Never excuse collective
+  overcharging.
+- Rocket-and-feathers: separate module, pass-through asymmetry only.
+
+## Wholesale price proxy (limitation, documented)
+- Source: NYMEX RBOB Gasoline (RB=F) for petrol, NYMEX Heating Oil (HO=F) for diesel,
+  via yfinance. Converted to pence/litre using GBP/USD spot rate.
+- These are US contracts. CMA uses Platts/Argus Rotterdam prices (paid service).
+  NYMEX is the closest free proxy but carries basis risk, especially for diesel.
+  HO=F (US heating oil) may understate UK diesel wholesale by ~5-10p/litre.
+  This is a documented limitation.
+
+## External reference data (data/external/)
+- desnz_pump_prices.parquet: weekly national avg pump prices + duty/VAT, 2018-present.
+- wholesale_prices.parquet: weekly NYMEX wholesale proxy in pence/litre, 2018-present.
+- msoa_house_prices.parquet: median house price per MSOA, year ending Sep 2025.
+- rural_urban_classification.parquet: 2011 RUC per MSOA (Urban/Rural + 10-fold).
+- Build script: build_external.py. Re-run to refresh wholesale prices.
+- Coverage: England and Wales only for MSOA data. Scotland/NI not in ONS datasets.
+
 ## Current status and next steps
 - DONE: collection pipeline fully operational. Task `FuelFinderSnapshot` runs
   Mon-Fri at 09:00, 11:30, 14:00, 16:30 via Windows Task Scheduler.
@@ -108,7 +139,12 @@ picture and phase order.
 - DONE: initial EDA notebook (`eda.ipynb`). Covers grade coverage, price
   distributions, brand patterns, station type, price staleness, regional
   patterns, diesel-petrol spread. Needs a re-run against the cleaned silver data.
-- NEXT: re-run eda.ipynb against the cleaned silver layer, then begin the
-  fair-price model (Phase 2 in the roadmap).
-- No modelling started yet. Still in the data collection and cleaning phase.
+- DONE: external reference data acquired and processed (build_external.py).
+  DESNZ pump prices, NYMEX wholesale proxy, ONS MSOA house prices, rural-urban
+  classification all saved as Parquet in data/external/.
+- DONE: project_definition.md written. Defines the dual-signal fair-price model,
+  the combined flag logic, the rocket-and-feathers module, and data sources.
+- NEXT: user reviews eda.ipynb (re-run against cleaned silver first). After that,
+  build feature layer (Signal 1 computation, competition spatial joins, MSOA joins).
+- No modelling started yet.
 
