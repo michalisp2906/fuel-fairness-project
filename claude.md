@@ -102,6 +102,20 @@ picture and phase order.
   Signal 1 high + Signal 2 low = local market problem, flag all. Never excuse collective
   overcharging.
 - Rocket-and-feathers: separate module, pass-through asymmetry only.
+- Wholesale lag: Signal 1 uses wholesale lagged 10 days (decided 2026-07-02),
+  matching the CMA's 1-2 week pass-through estimate. Backward as-of join against
+  week-END-labelled weekly data, so no lookahead; effective lag 10-16 days.
+  Sensitivity check at 7/14 days planned; validate later against the
+  rocket-and-feathers pass-through estimate.
+- Brand is EXCLUDED from Signal 2 features (decided 2026-07-02): including it
+  would normalise brand-wide premiums, which violates the collective-overcharging
+  rule. Brand stays in EDA and reporting. is_motorway and is_supermarket are in
+  the same grey zone, to be discussed before Signal 2 training.
+- MSOA join method: ONS postcode directory (ONSPD/NSPL) lookup on station
+  postcode, not point-in-polygon (decided 2026-07-02).
+- Dedup tiebreak: on price_ppl collisions at the same effective timestamp, keep
+  the row with the latest price_last_updated, treating it as a station
+  correction (decided 2026-07-02, fixed in build_silver.py).
 
 ## Wholesale price proxy (limitation, documented)
 - Source: NYMEX RBOB Gasoline (RB=F) for petrol, NYMEX Heating Oil (HO=F) for diesel,
@@ -116,8 +130,19 @@ picture and phase order.
 - wholesale_prices.parquet: weekly NYMEX wholesale proxy in pence/litre, 2018-present.
 - msoa_house_prices.parquet: median house price per MSOA, year ending Sep 2025.
 - rural_urban_classification.parquet: 2011 RUC per MSOA (Urban/Rural + 10-fold).
+  Superseded for modelling by the RUC21 indicator in postcode_lookup.parquet.
+- postcode_lookup.parquet: NSPL (May 2026) per-postcode lookup: 2021 MSOA code
+  and RUC21 rural-urban indicator. 2.7M postcodes incl. terminated. The source
+  zip (~180MB) is gitignored and re-downloaded by build_external.py if missing;
+  the release-specific ArcGIS item id is a constant in that script, update it
+  quarterly if refreshing.
 - Build script: build_external.py. Re-run to refresh wholesale prices.
-- Coverage: England and Wales only for MSOA data. Scotland/NI not in ONS datasets.
+- Coverage: house prices England and Wales only. MSOA codes cover England,
+  Wales, and Scotland (NSPL fills msoa21cd with Scottish Intermediate Zones).
+  RUC21 covers England, Wales, Scotland. Northern Ireland gets nulls for all
+  of these (documented limitation).
+- House price table confirmed to be on MSOA 2021 boundaries (99.9% join match
+  against NSPL msoa21cd for England stations).
 
 ## Current status and next steps
 - DONE: collection pipeline fully operational. Task `FuelFinderSnapshot` runs
@@ -138,13 +163,40 @@ picture and phase order.
   - QC check uses latitude.isna() (not brand_name) to detect unmatched PFS records.
 - DONE: initial EDA notebook (`eda.ipynb`). Covers grade coverage, price
   distributions, brand patterns, station type, price staleness, regional
-  patterns, diesel-petrol spread. Needs a re-run against the cleaned silver data.
+  patterns, diesel-petrol spread. Re-run against cleaned silver 2026-07-01;
+  awaiting user review.
 - DONE: external reference data acquired and processed (build_external.py).
   DESNZ pump prices, NYMEX wholesale proxy, ONS MSOA house prices, rural-urban
   classification all saved as Parquet in data/external/.
 - DONE: project_definition.md written. Defines the dual-signal fair-price model,
   the combined flag logic, the rocket-and-feathers module, and data sources.
-- NEXT: user reviews eda.ipynb (re-run against cleaned silver first). After that,
-  build feature layer (Signal 1 computation, competition spatial joins, MSOA joins).
+- DONE: silver data-quality fixes complete. PFS fallback join and collector
+  truncation fix (2026-07-02, Windows PC), dedup tiebreak on latest
+  price_last_updated (2026-07-02, Mac). Silver as of 2026-07-02: 56,800 events,
+  7,975 stations, zero unmatched PFS records.
+- DONE: feature layer (`build_features.py`), output data/features/features.parquet
+  (37,694 E10 + B7_STANDARD events, gitignored, rebuild locally):
+  - Signal 1: 10-day-lagged wholesale join, fair_price_ppl, overcharge_ppl.
+    Sanity-checked against DESNZ (weekly mean within ~1-3p of national average)
+    and CMA margins (implied E10 margin median 12.6p vs CMA ~10.7p; diesel
+    inflated ~5p by the HO=F proxy limitation, as documented).
+  - Competition features (static per station, permanently closed stations
+    excluded from the rival set): rival_count_1/3/5km, dist_nearest_rival_km,
+    dist_nearest_supermarket_km, n_rival_brands_5km. Behave as expected
+    (urban median 11 rivals in 5km vs rural 2).
+  - Location features via NSPL postcode join: msoa21cd, ruc21desc, ruc_2fold,
+    median_house_price, house_price_index. Match rates: England 99.9%,
+    Wales 100%, Scotland 99.7% (MSOA/RUC), NI 0% (no MSOAs, documented).
+    8 stations have invalid postcodes (API data errors, e.g. "BY8 4XP").
+- CAVEAT for Signal 2: motorway stations have the closest median nearest
+  rival (0.50km) because paired services sit on opposite carriageways.
+  Haversine distance overstates motorway competition. Discuss alongside the
+  is_motorway feature question before training.
+- NEXT: user reviews eda.ipynb. Then Signal 2 modelling prep: flag threshold
+  for Signal 1, feature set final call (is_motorway, is_supermarket),
+  temporal+spatial validation design.
+- NOTE: overcharge_ppl > 0 alone cannot be the Signal 1 YES/NO threshold
+  (95-97% of events are positive because current market margins exceed the 7p
+  fair margin, per CMA). Threshold choice is an open modelling decision.
 - No modelling started yet.
 
