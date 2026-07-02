@@ -220,7 +220,8 @@ def deduplicate_prices(prices: pd.DataFrame) -> pd.DataFrame:
     if not inconsistent.empty:
         warnings.warn(
             f"{len(inconsistent)} price events have inconsistent price_ppl values across "
-            "snapshots. Investigate before modelling.",
+            "snapshots (same effective timestamp, different price). Keeping the value "
+            "with the latest price_last_updated, treating it as a station correction.",
             stacklevel=2,
         )
 
@@ -230,10 +231,13 @@ def deduplicate_prices(prices: pd.DataFrame) -> pd.DataFrame:
         .rename("first_seen_at")
         .reset_index()
     )
-    # Take values from the earliest snapshot so price_ppl is consistent with first_seen_at.
+    # On a collision (same effective timestamp, different price) keep the row with
+    # the latest price_last_updated: a later update to the same event is the station
+    # correcting an entry error, so the correction wins. For the normal case (all
+    # rows identical) this changes nothing.
     one_per_key = (
-        prices.sort_values("snapshot_pulled_at")
-        .drop_duplicates(subset=key, keep="first")[key + ["price_ppl", "price_last_updated"]]
+        prices.sort_values(["price_last_updated", "snapshot_pulled_at"], na_position="first")
+        .drop_duplicates(subset=key, keep="last")[key + ["price_ppl", "price_last_updated"]]
     )
     deduped = first_seen.merge(one_per_key, on=key, how="left")
 
