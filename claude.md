@@ -212,9 +212,17 @@ picture and phase order.
   supermarkets 3%, rural 23% vs urban 7%), B7_STANDARD 22.4%. Top
   overchargers: motorway services and remote islands (Scilly, Gigha), which
   is face-valid. Remote-island delivery costs are a Signal 2 discussion item.
-- NEXT: Signal 2 modelling prep: temporal+spatial validation design, then
-  LightGBM on Signal 1 residuals (needs lightgbm + scikit-learn added to
-  pyproject). EDA review done 2026-07-03.
+- NEXT (decided 2026-07-03, deploy BEFORE Signal 2): walking-skeleton deploy.
+  Streamlit app on Community Cloud: UK map coloured by Signal 1 overcharge,
+  station lookup, methodology page. Then a GitHub Action that rebuilds
+  silver+features on each snapshot push (no API access needed, raw data is
+  in the repo), so the app self-updates. Collection stays on Windows.
+- AFTER deploy: Signal 2 modelling prep: temporal+spatial validation design,
+  then LightGBM on Signal 1 residuals (needs lightgbm + scikit-learn added
+  to pyproject). Then rocket-and-feathers, wire into app, write-up.
+- EDA review done 2026-07-03. Note: project started ~2026-06-24, so the
+  plan's "week N" schedule does not map to calendar weeks; actual pace is
+  much faster.
 - NOTE: overcharge_ppl > 0 alone cannot be the Signal 1 YES/NO threshold
   (95-97% of events are positive because current market margins exceed the 7p
   fair margin, per CMA). Threshold choice is an open modelling decision.
