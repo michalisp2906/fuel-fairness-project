@@ -87,31 +87,45 @@ def get_token(client_id: str, client_secret: str) -> str:
     return token
 
 
-def fetch_all_batches(endpoint: str, token: str) -> list:
-    """Page through a resource using the batch-number param until exhausted."""
+def fetch_all_batches(endpoint: str, token: str) -> tuple[list, bool]:
+    """Page through a resource using the batch-number param until exhausted.
+
+    Returns (records, truncated), where truncated is True if paging stopped
+    because the duplicate-page guard fired rather than a clean 404/empty page.
+    """
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept": "application/json",
         "User-Agent": USER_AGENT,
     }
     records: list = []
-    seen_signatures: set = set()
+    seen_batches: set = set()
 
     for batch in range(1, MAX_BATCHES + 1):
         rows = _fetch_one_batch(endpoint, batch, headers)
         if not rows:
-            break  # 404 or empty page: past the last page of data
+            return records, False  # 404 or empty page: past the last page of data
 
-        # Guard against an API that keeps returning the same page.
-        signature = json.dumps(rows[0], sort_keys=True)[:300]
-        if signature in seen_signatures:
-            break
-        seen_signatures.add(signature)
+        # Guard against an API that keeps returning the same page. Compare the
+        # full set of node_ids in the batch, not a truncated dump of just the
+        # first record: after sort_keys=True, node_id sorts past the first
+        # 300 characters, so two different stations that share brand,
+        # amenities, and flags could produce an identical truncated signature
+        # and falsely trigger this guard, cutting the pull short.
+        batch_signature = frozenset(r.get("node_id") for r in rows)
+        if batch_signature in seen_batches:
+            print(
+                f"WARNING: {endpoint} batch {batch} repeats an earlier batch, "
+                f"stopping early with {len(records)} records collected so far.",
+                file=sys.stderr,
+            )
+            return records, True
+        seen_batches.add(batch_signature)
 
         records.extend(rows)
         time.sleep(REQUEST_GAP_SECONDS)
 
-    return records
+    return records, False
 
 
 def _fetch_one_batch(endpoint: str, batch: int, headers: dict) -> list | None:
@@ -202,14 +216,15 @@ def main() -> int:
 
     exit_code = 0
     for name, endpoint in ENDPOINTS.items():
-        records = fetch_all_batches(endpoint, token)
+        records, truncated = fetch_all_batches(endpoint, token)
         if not records:
             print(f"WARNING: {name} returned no records", file=sys.stderr)
             exit_code = 2
             continue
         path = save_snapshot(name, records, ts)
         print(f"{name}: saved {len(records)} records -> {path}")
-    return exit_code
+        if truncated:
+            exit_code = max(exit_code, 3)
 
 
 if __name__ == "__main__":

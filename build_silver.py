@@ -57,6 +57,22 @@ _BRAND_CORRECTIONS: dict[str, str] = {
     "Eg On The Move":    "EG On The Move",
 }
 
+# Brand names carrying a test/staging marker, seen leaked into the live PFS
+# endpoint (e.g. "S49 Pre Prod Welcome Break", node_id cac88484...ea798a,
+# persistently mislabeled across every PFS snapshot collected 2026-06-24 to
+# 2026-07-02, even though the real-world station has traded as BP since
+# 2026-04-25). Metadata this unreliable can't be trusted for modelling, so
+# any price event resolving to one of these brands is dropped.
+_TEST_BRAND_MARKERS = ("pre prod", "pre-prod")
+
+# node_id values confirmed to carry implausible one-off data (not a pattern,
+# just a known-bad record). Pilning Garage (BS35 4JB): E10 239.9p / B7_STANDARD
+# 229.9p, ~90p above the mainland median for a non-remote England location.
+# Flagged 2026-07-02; investigate with the API provider if it persists.
+_EXCLUDED_NODE_IDS = frozenset({
+    "de97c5230d9464e3ec72c7f48cd4a2bba1db8203753f65003b2cf14235ec4370",
+})
+
 # Postcode area codes that uniquely identify Scotland, Wales, Northern Ireland.
 # Everything else is England. "S" (Sheffield) is England, not Scotland.
 _SCOTTISH_AREAS = frozenset({
@@ -260,6 +276,49 @@ def assign_nearest_pfs_snapshot(
     )
 
 
+def assign_nearest_pfs_snapshot_per_station(
+    node_ids: pd.Series,
+    price_timestamps: pd.Series,
+    pfs: pd.DataFrame,
+) -> pd.Series:
+    """
+    Fallback for price events whose globally-nearest PFS snapshot did not
+    include that particular station (e.g. a truncated pull that stopped
+    early). For each (node_id, event timestamp), finds the pulled_at of the
+    closest snapshot that DID include that specific node_id, searching both
+    earlier and later snapshots, not just the previous one.
+
+    Returns NaT for a node_id that has no PFS record in ANY snapshot at all
+    (a genuinely unmatched station, as opposed to one just missing from the
+    globally-nearest snapshot).
+    """
+    station_times = (
+        pfs.sort_values("pfs_pulled_at")
+        .groupby("node_id")["pfs_pulled_at"]
+        .apply(list)
+        .to_dict()
+    )
+
+    results = []
+    for node_id, ts in zip(node_ids, price_timestamps):
+        times = station_times.get(node_id)
+        if not times:
+            results.append(pd.NaT)
+            continue
+        times_unix = np.array([t.timestamp() for t in times])
+        t_unix = ts.timestamp()
+        idx = min(np.searchsorted(times_unix, t_unix), len(times) - 1)
+        idx_prev = max(idx - 1, 0)
+        best = (
+            times[idx_prev]
+            if abs(times_unix[idx_prev] - t_unix) <= abs(times_unix[idx] - t_unix)
+            else times[idx]
+        )
+        results.append(best)
+
+    return pd.Series(results, index=node_ids.index, name="pfs_snapshot_used")
+
+
 def _normalize_brand(raw) -> str | None:
     if pd.isna(raw):
         return None
@@ -312,13 +371,16 @@ def _normalize_country(raw_country, postcode) -> str:
 
 def clean_silver(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Apply three cleaning steps to the enriched silver dataframe:
+    Apply four cleaning steps to the enriched silver dataframe:
       1. Drop price events outside the plausible range [50p, 300p].
       2. Normalise brand_name: title-case, consolidate unbranded variants,
          preserve acronyms (BP), fix known typos.
       3. Normalise country: canonical names for known values; postcode
          inference for UNITED KINGDOM / UK / empty / NaN; "UK Other" if
          the postcode is also missing.
+      4. Drop known-bad records: test/staging brands leaked into the live
+         PFS endpoint, and specific node_ids confirmed to carry implausible
+         one-off data.
     """
     df = df.copy()
 
@@ -337,6 +399,18 @@ def clean_silver(df: pd.DataFrame) -> pd.DataFrame:
     df["country"] = df.apply(
         lambda r: _normalize_country(r["country"], r["postcode"]), axis=1
     )
+
+    # 4. Known-bad records
+    before = len(df)
+    is_test_brand = df["brand_name"].str.contains(
+        "|".join(_TEST_BRAND_MARKERS), case=False, na=False
+    )
+    is_excluded_node = df["node_id"].isin(_EXCLUDED_NODE_IDS)
+    df = df[~(is_test_brand | is_excluded_node)]
+    n_dropped = before - len(df)
+    if n_dropped:
+        print(f"  Dropped {n_dropped} price events from known-bad records "
+              f"(test/staging brands or excluded node_ids)")
 
     return df
 
@@ -365,22 +439,66 @@ def main() -> None:
         "is_motorway_service_station":    "is_motorway",
         "is_supermarket_service_station": "is_supermarket",
     })
-    enriched = prices.merge(
-        pfs_renamed,
-        left_on=["node_id", "pfs_snapshot_used"],
-        right_on=["node_id", "pfs_pulled_at"],
-        how="left",
-    ).drop(columns=["pfs_pulled_at"])
+    event_cols = [
+        "node_id", "fuel_type", "price_ppl",
+        "price_change_effective_timestamp", "price_last_updated", "first_seen_at",
+    ]
+
+    def join_pfs(df: pd.DataFrame) -> pd.DataFrame:
+        """Left-join station details onto (node_id, pfs_snapshot_used), preserving df's index."""
+        joined = df.merge(
+            pfs_renamed,
+            left_on=["node_id", "pfs_snapshot_used"],
+            right_on=["node_id", "pfs_pulled_at"],
+            how="left",
+        ).drop(columns=["pfs_pulled_at"])
+        joined.index = df.index
+        return joined
+
+    enriched = join_pfs(prices)
+    enriched["pfs_snapshot_is_fallback"] = False
 
     # QC: use latitude (not brand_name) to detect a missing PFS record, because
     # brand_name can legitimately be null for unbranded stations.
     no_pfs_match = enriched["latitude"].isna()
     if no_pfs_match.any():
-        n = no_pfs_match.sum()
-        print(f"  WARNING: {n} price events have no matching PFS station record.")
+        n_initial = int(no_pfs_match.sum())
+        print(
+            f"  {n_initial} price events did not match the globally-nearest PFS "
+            "snapshot (e.g. a truncated pull that stopped early). Retrying with a "
+            "per-station nearest match..."
+        )
+
+        # Fallback: for just the unmatched events, find the nearest snapshot that
+        # DID include that specific station (searching both earlier and later
+        # snapshots), instead of the snapshot nearest in time across all stations.
+        fallback_input = enriched.loc[no_pfs_match, event_cols].copy()
+        fallback_input["pfs_snapshot_used"] = assign_nearest_pfs_snapshot_per_station(
+            fallback_input["node_id"],
+            fallback_input["price_change_effective_timestamp"],
+            pfs,
+        )
+        fallback_joined = join_pfs(fallback_input)
+        fallback_joined["pfs_snapshot_is_fallback"] = True
+
+        recovered = fallback_joined["latitude"].notna()
+        n_recovered = int(recovered.sum())
+        print(
+            f"  Recovered {n_recovered} of {n_initial} via per-station fallback "
+            "match (borrowed station details from the nearest snapshot that did "
+            "include that station)."
+        )
+
+        recovered_idx = fallback_joined.index[recovered]
+        enriched.loc[recovered_idx, fallback_joined.columns] = fallback_joined.loc[recovered_idx]
+
+    no_pfs_match_final = enriched["latitude"].isna()
+    if no_pfs_match_final.any():
+        n = int(no_pfs_match_final.sum())
+        print(f"  WARNING: {n} price events have no matching PFS station record in ANY snapshot.")
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         qc_path = QC_DIR / f"unmatched_prices_{stamp}.csv"
-        enriched.loc[no_pfs_match, [
+        enriched.loc[no_pfs_match_final, [
             "node_id", "fuel_type",
             "price_change_effective_timestamp", "pfs_snapshot_used",
         ]].to_csv(qc_path, index=False)
@@ -394,7 +512,7 @@ def main() -> None:
     col_order = [
         "node_id", "fuel_type", "price_ppl",
         "price_change_effective_timestamp", "price_last_updated", "first_seen_at",
-        "pfs_snapshot_used",
+        "pfs_snapshot_used", "pfs_snapshot_is_fallback",
         "brand_name", "trading_name", "postcode",
         "latitude", "longitude", "city", "county", "country",
         "is_motorway", "is_supermarket",
