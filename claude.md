@@ -116,6 +116,21 @@ picture and phase order.
 - Dedup tiebreak: on price_ppl collisions at the same effective timestamp, keep
   the row with the latest price_last_updated, treating it as a station
   correction (decided 2026-07-02, fixed in build_silver.py).
+- Signal 1 flag (decided 2026-07-03): proxy basis correction + noise buffer.
+  Per-fuel constant basis (UK wholesale minus NYMEX proxy) estimated from the
+  national accounting identity (DESNZ pump / 1.2 - duty - CMA margin 10.7p)
+  over a trailing 104-week window: currently E10 +7.0p, B7_STANDARD +9.3p.
+  Constant, NOT rolling: a rolling calibration would absorb genuine national
+  margin dynamics (rockets and feathers) into the correction. Flag =
+  overcharge_ppl > 3p buffer (~1 weekly std of the basis series). Known cost:
+  month-level fair-price levels carry a few pence of drift uncertainty, shared
+  by all stations, so cross-sectional comparisons are unaffected.
+- Signal 2 feature exclusions (decided 2026-07-03): brand, is_motorway, and
+  is_supermarket are all excluded as features (own-type attributes would
+  normalise group-wide premiums). dist_nearest_supermarket_km STAYS (rival
+  pressure from others is legitimate). Motorway stations are excluded from
+  Signal 2 training entirely and analysed as their own comparison group
+  (also sidesteps the paired-services distance problem).
 
 ## Wholesale price proxy (limitation, documented)
 - Source: NYMEX RBOB Gasoline (RB=F) for petrol, NYMEX Heating Oil (HO=F) for diesel,
@@ -190,11 +205,16 @@ picture and phase order.
     8 stations have invalid postcodes (API data errors, e.g. "BY8 4XP").
 - CAVEAT for Signal 2: motorway stations have the closest median nearest
   rival (0.50km) because paired services sit on opposite carriageways.
-  Haversine distance overstates motorway competition. Discuss alongside the
-  is_motorway feature question before training.
-- NEXT: user reviews eda.ipynb. Then Signal 2 modelling prep: flag threshold
-  for Signal 1, feature set final call (is_motorway, is_supermarket),
-  temporal+spatial validation design.
+  Haversine distance overstates motorway competition. Handled by analysing
+  motorway stations as their own group outside Signal 2 training.
+- DONE: Signal 1 flag implemented (basis calibration + 3p buffer, see
+  decisions). June 2026 flag shares: E10 10.2% of events (motorway 85%,
+  supermarkets 3%, rural 23% vs urban 7%), B7_STANDARD 22.4%. Top
+  overchargers: motorway services and remote islands (Scilly, Gigha), which
+  is face-valid. Remote-island delivery costs are a Signal 2 discussion item.
+- NEXT: Signal 2 modelling prep: temporal+spatial validation design, then
+  LightGBM on Signal 1 residuals (needs lightgbm + scikit-learn added to
+  pyproject). EDA review done 2026-07-03.
 - NOTE: overcharge_ppl > 0 alone cannot be the Signal 1 YES/NO threshold
   (95-97% of events are positive because current market margins exceed the 7p
   fair margin, per CMA). Threshold choice is an open modelling decision.

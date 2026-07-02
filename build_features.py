@@ -47,6 +47,7 @@ import pandas as pd
 
 SILVER_IN = Path("data/silver/prices_silver.parquet")
 WHOLESALE_IN = Path("data/external/wholesale_prices.parquet")
+DESNZ_IN = Path("data/external/desnz_pump_prices.parquet")
 POSTCODES_IN = Path("data/external/postcode_lookup.parquet")
 HOUSE_PRICES_IN = Path("data/external/msoa_house_prices.parquet")
 FEATURES_DIR = Path("data/features")
@@ -65,6 +66,26 @@ DUTY_PPL = 52.95          # cut from 57.95p on 28 March 2022, frozen since
 FAIR_MARGIN_PPL = 7.0     # CMA pre-2022 baseline retail margin
 VAT_RATE = 1.20           # applied on top of the duty-inclusive price
 WHOLESALE_LAG_DAYS = 10   # decided 2026-07-02; sensitivity at 7/14 planned
+
+# --- Proxy basis calibration and flag threshold (decided 2026-07-03) ----------
+#
+# The NYMEX proxy systematically understates UK wholesale (freight, spec, and
+# market differences; worst for diesel). We estimate the gap ("basis") per fuel
+# from the national accounting identity: DESNZ national pump price, minus VAT,
+# duty, and the CMA's measured retail margin, gives an implied UK wholesale;
+# basis = implied UK wholesale - proxy. A CONSTANT basis over a long trailing
+# window is used deliberately: the weekly basis series also contains genuine
+# national margin swings (rockets and feathers), and a rolling calibration
+# would absorb those into the correction, hiding market-wide overcharging
+# dynamics that Signal 1 must keep visible. Over ~2 years those swings average
+# out. Known cost: in any single month the corrected level can be off by a few
+# pence (weekly basis std ~3.5p), shared by all stations equally, so
+# cross-sectional comparisons are unaffected. FLAG_BUFFER_PPL (~1 std) absorbs
+# this residual noise: a station is flagged only when its price exceeds the
+# fair price by more than the buffer.
+CMA_MARGIN_PPL = 10.7       # CMA road fuel monitoring, current avg retail margin
+BASIS_WINDOW_WEEKS = 104
+FLAG_BUFFER_PPL = 3.0
 
 # If the backward join has to reach further back than this for a wholesale
 # value, the wholesale parquet is stale (build_external.py needs a re-run).
@@ -284,13 +305,65 @@ def join_location_features(stations: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def compute_signal1(events: pd.DataFrame) -> pd.DataFrame:
-    """Compute the cost-plus fair price and the Signal 1 overcharge score."""
-    events = events.copy()
-    events["fair_price_ppl"] = (
-        (events["wholesale_ppl"] + DUTY_PPL + FAIR_MARGIN_PPL) * VAT_RATE
+def estimate_wholesale_basis() -> dict[str, float]:
+    """
+    Estimate the constant per-fuel basis (UK wholesale minus NYMEX proxy) from
+    the national accounting identity over the trailing BASIS_WINDOW_WEEKS.
+
+    implied UK wholesale = DESNZ pump / 1.2 - duty - CMA margin
+    basis               = median(implied UK wholesale - lagged proxy)
+
+    The proxy is lagged with the same convention as Signal 1 (pump prices for
+    the week reflect wholesale ~10 days before mid-week).
+    """
+    desnz = pd.read_parquet(DESNZ_IN)
+    wholesale = pd.read_parquet(WHOLESALE_IN)
+    wholesale["date"] = wholesale["date"].astype("datetime64[us]")
+
+    d = desnz.copy()
+    d["week_commencing"] = d["week_commencing"].astype("datetime64[us]")
+    d["lag_date"] = (
+        d["week_commencing"]
+        + pd.Timedelta(days=3)
+        - pd.Timedelta(days=WHOLESALE_LAG_DAYS)
     )
+    d = pd.merge_asof(
+        d.sort_values("lag_date"),
+        wholesale.sort_values("date"),
+        left_on="lag_date", right_on="date",
+        direction="backward",
+    )
+
+    basis = {}
+    for grade, pump_col, duty_col, whl_col in (
+        ("E10", "ulsp_pump_ppl", "ulsp_duty_ppl", "petrol_wholesale_ppl"),
+        ("B7_STANDARD", "ulsd_pump_ppl", "ulsd_duty_ppl", "diesel_wholesale_ppl"),
+    ):
+        weekly = (
+            d[pump_col] / VAT_RATE - d[duty_col] - CMA_MARGIN_PPL - d[whl_col]
+        ).dropna().tail(BASIS_WINDOW_WEEKS)
+        basis[grade] = float(weekly.median())
+        print(
+            f"  {grade}: basis +{basis[grade]:.1f}p over the proxy "
+            f"(weekly std {weekly.std():.1f}p, {len(weekly)} weeks)"
+        )
+    return basis
+
+
+def compute_signal1(events: pd.DataFrame) -> pd.DataFrame:
+    """
+    Compute the cost-plus fair price, the Signal 1 overcharge score, and the
+    Signal 1 flag (overcharge above the measurement-noise buffer).
+    """
+    events = events.copy()
+    basis = estimate_wholesale_basis()
+    events["wholesale_basis_ppl"] = events["fuel_type"].map(basis)
+    events["fair_price_ppl"] = (
+        events["wholesale_ppl"] + events["wholesale_basis_ppl"]
+        + DUTY_PPL + FAIR_MARGIN_PPL
+    ) * VAT_RATE
     events["overcharge_ppl"] = events["price_ppl"] - events["fair_price_ppl"]
+    events["signal1_flag"] = events["overcharge_ppl"] > FLAG_BUFFER_PPL
     return events
 
 
@@ -325,13 +398,14 @@ def main() -> None:
     print("\nDone.")
     print(f"  Rows: {len(events):,}")
     for grade in sorted(MODELLED_GRADES):
-        sub = events[events["fuel_type"] == grade]["overcharge_ppl"]
+        sub = events[events["fuel_type"] == grade]
+        oc = sub["overcharge_ppl"]
         print(
             f"  {grade:12s} overcharge_ppl: "
-            f"median {sub.median():6.1f}  "
-            f"p10 {sub.quantile(0.10):6.1f}  "
-            f"p90 {sub.quantile(0.90):6.1f}  "
-            f"share > 0: {(sub > 0).mean():5.1%}"
+            f"median {oc.median():6.1f}  "
+            f"p10 {oc.quantile(0.10):6.1f}  "
+            f"p90 {oc.quantile(0.90):6.1f}  "
+            f"flagged: {sub['signal1_flag'].mean():5.1%}"
         )
 
 
