@@ -17,6 +17,10 @@ data/silver/
 # External raw downloads (large, re-downloadable via build_external.py)
 data/external/*.xlsx
 data/external/*.ods
+data/external/*.zip
+
+# Derived data (regenerate with build_features.py)
+data/features/
 
 # OS noise
 Thumbs.db

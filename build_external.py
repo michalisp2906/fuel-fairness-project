@@ -21,6 +21,16 @@ data/external/msoa_house_prices.parquet
 data/external/rural_urban_classification.parquet
     Rural-urban classification per MSOA (England and Wales).
     Source: DEFRA/ONS 2011 Rural Urban Classification lookup tables.
+    Superseded for modelling by the per-postcode RUC21 indicator in
+    postcode_lookup.parquet; kept for reference.
+
+data/external/postcode_lookup.parquet
+    One row per UK postcode (current and terminated): 2021 MSOA code and the
+    2021 rural-urban classification indicator, from the ONS National
+    Statistics Postcode Lookup (NSPL, May 2026 release). Used to join
+    stations to MSOA-level data (house prices) and to classify each
+    station's postcode as urban or rural. Northern Ireland has no MSOAs
+    and no RUC21, so those columns are null for NI postcodes.
 
 Wholesale price notes
 ---------------------
@@ -39,7 +49,10 @@ Fuel duty was cut from 57.95p to 52.95p on 28 March 2022 and has remained
 at 52.95p/litre since. The DESNZ CSV reflects this correctly.
 """
 
+import zipfile
+
 import pandas as pd
+import requests
 import yfinance as yf
 from pathlib import Path
 
@@ -47,8 +60,37 @@ DATA_DIR = Path("data/external")
 RAW_DESNZ_CSV = DATA_DIR / "desnz_weekly_fuel_prices.csv"
 RAW_MSOA_XLSX = DATA_DIR / "ons_msoa_house_prices.xlsx"
 RAW_RUC_ODS = DATA_DIR / "ons_rural_urban_classification.ods"
+RAW_NSPL_ZIP = DATA_DIR / "nspl_may_2026.zip"
+
+# ONS Open Geography portal, "National Statistics Postcode Lookup (May 2026)"
+# CSV Collection. Release-specific: the portal publishes a new item id each
+# quarter (Feb/May/Aug/Nov), so update both the id and RAW_NSPL_ZIP on refresh.
+NSPL_URL = (
+    "https://www.arcgis.com/sharing/rest/content/items/"
+    "7668e0d35cab4f6db6f15f03be610fb0/data"
+)
 
 LITRES_PER_US_GALLON = 3.78541
+
+# RUC21 indicator descriptions, from the names-and-codes CSVs shipped inside
+# the NSPL zip (Documents/). England and Wales use lettered codes with an
+# explicit urban/rural flag; Scotland uses the numeric 6-fold classification
+# where 5 and 6 are rural. Northern Ireland has no RUC21.
+_RUC21_DESC = {
+    "RLF1": "Larger rural: Further from a major town or city",
+    "RLN1": "Larger rural: Nearer to a major town or city",
+    "RSF1": "Smaller rural: Further from a major town or city",
+    "RSN1": "Smaller rural: Nearer to a major town or city",
+    "UF1":  "Urban: Further from a major town or city",
+    "UN1":  "Urban: Nearer to a major town or city",
+    "1":    "Large Urban Areas",
+    "2":    "Other Urban Areas",
+    "3":    "Accessible Small Towns",
+    "4":    "Remote Small Towns",
+    "5":    "Accessible Rural",
+    "6":    "Remote Rural",
+}
+_RUC21_RURAL_CODES = {"RLF1", "RLN1", "RSF1", "RSN1", "5", "6"}
 
 
 def build_desnz_pump_prices() -> pd.DataFrame:
@@ -154,17 +196,77 @@ def build_rural_urban_classification() -> pd.DataFrame:
     return out.reset_index(drop=True)
 
 
+def build_postcode_lookup() -> pd.DataFrame:
+    """
+    Build a postcode -> (MSOA 2021, RUC21) lookup from the ONS NSPL.
+
+    Downloads the NSPL zip on first run (~180 MB, gitignored) and reads the
+    per-postcode-area CSVs straight out of it. Terminated postcodes are kept
+    (a station's recorded postcode may be an old one) and flagged.
+
+    The join key pcd_key is the postcode with all whitespace removed and
+    uppercased, so it matches regardless of spacing conventions.
+    """
+    if not RAW_NSPL_ZIP.exists():
+        print(f"  Downloading NSPL zip (~180 MB) -> {RAW_NSPL_ZIP} ...")
+        with requests.get(NSPL_URL, stream=True, timeout=600) as resp:
+            resp.raise_for_status()
+            with open(RAW_NSPL_ZIP, "wb") as fh:
+                for chunk in resp.iter_content(chunk_size=1 << 20):
+                    fh.write(chunk)
+    else:
+        print(f"  Using cached {RAW_NSPL_ZIP}")
+
+    usecols = ["pcds", "doterm", "msoa21cd", "ruc21ind"]
+    frames = []
+    with zipfile.ZipFile(RAW_NSPL_ZIP) as zf:
+        csv_names = [
+            n for n in zf.namelist()
+            if n.startswith("Data/multi_csv/") and n.endswith(".csv")
+        ]
+        print(f"  Reading {len(csv_names)} postcode-area CSVs from the zip...")
+        for name in csv_names:
+            with zf.open(name) as fh:
+                frames.append(pd.read_csv(fh, usecols=usecols, dtype=str))
+    out = pd.concat(frames, ignore_index=True)
+
+    out["pcd_key"] = out["pcds"].str.replace(r"\s+", "", regex=True).str.upper()
+    out["is_terminated"] = out["doterm"].notna()
+
+    # Pseudo-codes like E99999999 mean "not allocated", not a real MSOA.
+    out.loc[out["msoa21cd"].str.endswith("99999999", na=False), "msoa21cd"] = pd.NA
+
+    out["ruc21desc"] = out["ruc21ind"].map(_RUC21_DESC)
+    out["ruc_2fold"] = pd.Series(pd.NA, index=out.index, dtype="object")
+    known = out["ruc21ind"].isin(_RUC21_DESC)
+    out.loc[known, "ruc_2fold"] = "Urban"
+    out.loc[out["ruc21ind"].isin(_RUC21_RURAL_CODES), "ruc_2fold"] = "Rural"
+
+    unknown = out.loc[out["ruc21ind"].notna() & ~known, "ruc21ind"].unique()
+    if len(unknown):
+        print(f"  WARNING: unknown RUC21 codes left unclassified: {sorted(unknown)}")
+
+    cols = ["pcd_key", "pcds", "msoa21cd", "ruc21ind", "ruc21desc", "ruc_2fold",
+            "is_terminated"]
+    out = out[cols]
+    dupes = out["pcd_key"].duplicated().sum()
+    if dupes:
+        print(f"  WARNING: {dupes} duplicate postcode keys, keeping first")
+        out = out.drop_duplicates(subset="pcd_key", keep="first")
+    return out.reset_index(drop=True)
+
+
 def main():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-    print("\n[1/4] DESNZ weekly pump prices...")
+    print("\n[1/5] DESNZ weekly pump prices...")
     pump = build_desnz_pump_prices()
     pump.to_parquet(DATA_DIR / "desnz_pump_prices.parquet", index=False)
     print(f"  {len(pump)} weeks, {pump['week_commencing'].min().date()} to "
           f"{pump['week_commencing'].max().date()}")
     print(f"  Current duty: {pump['ulsp_duty_ppl'].iloc[-1]}p/litre")
 
-    print("\n[2/4] Wholesale prices from yfinance...")
+    print("\n[2/5] Wholesale prices from yfinance...")
     wholesale = build_wholesale_prices()
     wholesale.to_parquet(DATA_DIR / "wholesale_prices.parquet", index=False)
     print(f"  {len(wholesale)} weeks, {wholesale['date'].min().date()} to "
@@ -173,12 +275,12 @@ def main():
     print(f"  Latest: petrol wholesale {last['petrol_wholesale_ppl']:.1f}p/L, "
           f"diesel {last['diesel_wholesale_ppl']:.1f}p/L, GBP/USD {last['gbpusd']:.4f}")
 
-    print("\n[3/4] ONS MSOA house prices...")
+    print("\n[3/5] ONS MSOA house prices...")
     house = build_msoa_house_prices()
     house.to_parquet(DATA_DIR / "msoa_house_prices.parquet", index=False)
     print(f"  Saved {len(house):,} MSOAs")
 
-    print("\n[4/4] Rural-urban classification...")
+    print("\n[4/5] Rural-urban classification...")
     try:
         ruc = build_rural_urban_classification()
         ruc.to_parquet(DATA_DIR / "rural_urban_classification.parquet", index=False)
@@ -186,6 +288,13 @@ def main():
     except ValueError as e:
         print(f"  WARNING: {e}")
         print("  Skipping rural-urban classification. Run manually after inspecting sheets.")
+
+    print("\n[5/5] NSPL postcode lookup...")
+    postcodes = build_postcode_lookup()
+    postcodes.to_parquet(DATA_DIR / "postcode_lookup.parquet", index=False)
+    print(f"  Saved {len(postcodes):,} postcodes "
+          f"({postcodes['is_terminated'].mean():.0%} terminated, "
+          f"MSOA coverage {postcodes['msoa21cd'].notna().mean():.1%})")
 
     print("\nDone. Output files in data/external/:")
     for f in sorted(DATA_DIR.glob("*.parquet")):
