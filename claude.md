@@ -153,7 +153,9 @@ picture and phase order.
 - msoa_house_prices.parquet: median house price per MSOA, year ending Sep 2025.
 - rural_urban_classification.parquet: 2011 RUC per MSOA (Urban/Rural + 10-fold).
   Superseded for modelling by the RUC21 indicator in postcode_lookup.parquet.
-- postcode_lookup.parquet: NSPL (May 2026) per-postcode lookup: 2021 MSOA code
+- postcode_lookup.parquet: NSPL (May 2026) per-postcode lookup: unit-postcode
+  centroid (postcode_lat/postcode_long, float32, used by coordinate healing
+  in build_silver.py), 2021 MSOA code
   and RUC21 rural-urban indicator. 2.7M postcodes incl. terminated. The source
   zip (~180MB) is gitignored and re-downloaded by build_external.py if missing;
   the release-specific ArcGIS item id is a constant in that script, update it
@@ -230,10 +232,21 @@ picture and phase order.
 - FINDING (2026-07-03): judged at current wholesale, 76% of diesel stations
   are flagged (E10 21%). Cross-checked against DESNZ: national avg diesel
   really is 7-9p above the fair line, wholesale fell sharply mid-June and
-  pump prices are following slowly (rocket-and-feathers, visibly). Also
-  found: a few stations have coordinates in the sea (API data errors, add a
-  coordinate sanity check to silver cleaning later), some postcodes arrive
-  unspaced (e.g. TF118TG).
+  pump prices are following slowly (rocket-and-feathers, visibly). Some
+  postcodes arrive unspaced (e.g. TF118TG).
+- DONE (2026-07-03): coordinate healing in build_silver.py. Some PFS
+  snapshots carry corrupted station coordinates (lat/long swapped, longitude
+  sign flipped, signs dropped, garbage; 92 stations affected, heaviest in the
+  2026-06-24 snapshot, user-reported as stations in the sea and off Somalia).
+  Stations do not move, so silver now assigns ONE canonical coordinate per
+  station: latest observation inside the UK bounding box AND within 15 km of
+  its NSPL unit-postcode centroid; else the postcode centroid (~100 m
+  accuracy); else null, warned. coord_source column records which. In-box
+  observations that disagree with a known centroid by >15 km take the
+  centroid too (flipped signs can stay in-box; postcode is modal across
+  snapshots and corroborated by town/country fields) and are logged to
+  data/silver/qc/. postcode_lookup.parquet gained centroid columns for this
+  (zstd-compressed, 27.5 MB, still committed).
 - NEXT: deploy on Streamlit Community Cloud (user account, point it at
   app/streamlit_app.py on main; repo has uv.lock so Cloud should resolve
   deps via uv, fall back to a requirements.txt if the build fails). Then a

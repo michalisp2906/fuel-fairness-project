@@ -25,7 +25,9 @@ data/external/rural_urban_classification.parquet
     postcode_lookup.parquet; kept for reference.
 
 data/external/postcode_lookup.parquet
-    One row per UK postcode (current and terminated): 2021 MSOA code and the
+    One row per UK postcode (current and terminated): unit-postcode centroid
+    (postcode_lat/postcode_long, used to validate and repair station
+    coordinates in build_silver.py), 2021 MSOA code and the
     2021 rural-urban classification indicator, from the ONS National
     Statistics Postcode Lookup (NSPL, May 2026 release). Used to join
     stations to MSOA-level data (house prices) and to classify each
@@ -217,7 +219,7 @@ def build_postcode_lookup() -> pd.DataFrame:
     else:
         print(f"  Using cached {RAW_NSPL_ZIP}")
 
-    usecols = ["pcds", "doterm", "msoa21cd", "ruc21ind"]
+    usecols = ["pcds", "doterm", "msoa21cd", "ruc21ind", "lat", "long"]
     frames = []
     with zipfile.ZipFile(RAW_NSPL_ZIP) as zf:
         csv_names = [
@@ -233,6 +235,16 @@ def build_postcode_lookup() -> pd.DataFrame:
     out["pcd_key"] = out["pcds"].str.replace(r"\s+", "", regex=True).str.upper()
     out["is_terminated"] = out["doterm"].notna()
 
+    # Unit-postcode centroid. NSPL marks "no grid reference" with lat 99.999999;
+    # null those out. float32 keeps the committed parquet small (~11 m precision
+    # at UK latitudes, far below the accuracy of a postcode centroid anyway).
+    out["postcode_lat"] = pd.to_numeric(out["lat"], errors="coerce")
+    out["postcode_long"] = pd.to_numeric(out["long"], errors="coerce")
+    no_grid = out["postcode_lat"] > 90
+    out.loc[no_grid, ["postcode_lat", "postcode_long"]] = pd.NA
+    out["postcode_lat"] = out["postcode_lat"].astype("float32")
+    out["postcode_long"] = out["postcode_long"].astype("float32")
+
     # Pseudo-codes like E99999999 mean "not allocated", not a real MSOA.
     out.loc[out["msoa21cd"].str.endswith("99999999", na=False), "msoa21cd"] = pd.NA
 
@@ -246,7 +258,8 @@ def build_postcode_lookup() -> pd.DataFrame:
     if len(unknown):
         print(f"  WARNING: unknown RUC21 codes left unclassified: {sorted(unknown)}")
 
-    cols = ["pcd_key", "pcds", "msoa21cd", "ruc21ind", "ruc21desc", "ruc_2fold",
+    cols = ["pcd_key", "pcds", "postcode_lat", "postcode_long",
+            "msoa21cd", "ruc21ind", "ruc21desc", "ruc_2fold",
             "is_terminated"]
     out = out[cols]
     dupes = out["pcd_key"].duplicated().sum()
@@ -291,7 +304,11 @@ def main():
 
     print("\n[5/5] NSPL postcode lookup...")
     postcodes = build_postcode_lookup()
-    postcodes.to_parquet(DATA_DIR / "postcode_lookup.parquet", index=False)
+    # zstd, not the default snappy: this file is committed, and zstd roughly
+    # halves it (27 MB vs 50 MB with the centroid columns).
+    postcodes.to_parquet(
+        DATA_DIR / "postcode_lookup.parquet", index=False, compression="zstd"
+    )
     print(f"  Saved {len(postcodes):,} postcodes "
           f"({postcodes['is_terminated'].mean():.0%} terminated, "
           f"MSOA coverage {postcodes['msoa21cd'].notna().mean():.1%})")

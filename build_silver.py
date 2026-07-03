@@ -10,6 +10,12 @@ Each row is one unique price-change event, enriched with station details from
 the PFS snapshot closest in time to that price event (not just the latest one,
 because station attributes like closure status can change over time).
 
+Exception: coordinates. Some PFS snapshots carry corrupted coordinates for a
+small subset of stations, and a station does not move, so latitude/longitude
+are healed to one canonical, validated value per station (see
+heal_coordinates). Requires data/external/postcode_lookup.parquet (committed,
+built by build_external.py) for the postcode-centroid reference.
+
 Full rebuild: reads all bronze files on every run. Safe to run repeatedly.
 
 Run:
@@ -33,6 +39,21 @@ QC_DIR = SILVER_DIR / "qc"
 SILVER_OUT = SILVER_DIR / "prices_silver.parquet"
 
 KNOWN_FUEL_GRADES = {"E10", "E5", "B7_STANDARD", "B7_PREMIUM", "B10", "HVO"}
+
+# --- Coordinate healing constants ---------------------------------------------
+
+POSTCODES_IN = Path("data/external/postcode_lookup.parquet")
+
+# Generous bounding box around the UK (Shetland included, Channel Islands not:
+# the scheme has no stations there). Coordinates outside this box are corrupt.
+UK_LAT_RANGE = (49.8, 61.0)
+UK_LON_RANGE = (-8.7, 1.8)
+
+# A station should sit close to its unit-postcode centroid (usually within a
+# few hundred metres). 15 km is deliberately loose; it only needs to catch
+# corruption like a flipped longitude sign, which moves a station 100+ km.
+MAX_KM_FROM_POSTCODE = 15.0
+EARTH_RADIUS_KM = 6371.0088
 
 # --- Cleaning constants -------------------------------------------------------
 
@@ -373,6 +394,139 @@ def _normalize_country(raw_country, postcode) -> str:
     return nation if nation else "UK Other"
 
 
+def _haversine_km(lat1, lon1, lat2, lon2):
+    """Element-wise haversine distance in km between two coordinate arrays."""
+    lat1, lon1, lat2, lon2 = map(np.radians, (lat1, lon1, lat2, lon2))
+    a = (
+        np.sin((lat2 - lat1) / 2) ** 2
+        + np.cos(lat1) * np.cos(lat2) * np.sin((lon2 - lon1) / 2) ** 2
+    )
+    return 2 * EARTH_RADIUS_KM * np.arcsin(np.sqrt(np.clip(a, 0, 1)))
+
+
+def heal_coordinates(df: pd.DataFrame, pfs: pd.DataFrame) -> pd.DataFrame:
+    """
+    Replace per-event station coordinates with one canonical, validated
+    coordinate per station.
+
+    Some PFS snapshots carry corrupted coordinates for a small subset of
+    stations (observed 2026-07-03: lat/long swapped, longitude sign flipped,
+    signs dropped, or entirely wrong values; heaviest in the 2026-06-24
+    snapshot, 92 stations affected in total). A station does not move, so
+    per-event coordinates only add corruption risk: every event gets the
+    station's best coordinate across ALL snapshots instead.
+
+    Selection per station, validated against the NSPL unit-postcode centroid:
+      1. latest observation inside the UK bounding box and within
+         MAX_KM_FROM_POSTCODE of the postcode centroid ("observed");
+      2. else latest observation inside the UK bounding box, only when no
+         centroid is available to validate against ("observed");
+      3. else the postcode centroid itself ("postcode_centroid", accurate to
+         roughly 100 m, good enough for mapping and competition features).
+         This includes stations whose in-box observations ALL disagree with
+         a known centroid by >MAX_KM_FROM_POSTCODE: those observations match
+         known corruption modes (a flipped longitude sign keeps a station
+         inside the box but ~100 km off), while the postcode is modal across
+         snapshots and corroborated by the station's town and country fields,
+         so the centroid is the more trustworthy witness. Logged to QC;
+      4. else coordinates are nulled, warned, never dropped.
+
+    Adds a coord_source column ("observed", "postcode_centroid", or None).
+    """
+    postcodes = pd.read_parquet(
+        POSTCODES_IN, columns=["pcd_key", "postcode_lat", "postcode_long"]
+    )
+
+    obs = pfs[["node_id", "latitude", "longitude", "postcode", "pfs_pulled_at"]].copy()
+
+    # One postcode per station (the modal value across snapshots, so a
+    # corrupted postcode in one snapshot cannot mislead the centroid check).
+    modal_pc = (
+        obs.dropna(subset=["postcode"])
+        .groupby("node_id")["postcode"]
+        .agg(lambda s: s.mode().iat[0])
+        .rename("modal_postcode")
+        .reset_index()
+    )
+    modal_pc["pcd_key"] = (
+        modal_pc["modal_postcode"].str.replace(r"\s+", "", regex=True).str.upper()
+    )
+    modal_pc = modal_pc.merge(postcodes, on="pcd_key", how="left")
+
+    obs = obs.dropna(subset=["latitude", "longitude"]).merge(
+        modal_pc.drop(columns="pcd_key"), on="node_id", how="left"
+    )
+    in_box = (
+        obs["latitude"].between(*UK_LAT_RANGE)
+        & obs["longitude"].between(*UK_LON_RANGE)
+    )
+    dist_km = _haversine_km(
+        obs["latitude"], obs["longitude"],
+        obs["postcode_lat"], obs["postcode_long"],
+    )
+    near_postcode = dist_km <= MAX_KM_FROM_POSTCODE  # False where centroid unknown
+
+    obs["tier"] = np.select([in_box & near_postcode, in_box], [1, 2], default=3)
+    obs["dist_km"] = dist_km
+
+    best = (
+        obs[obs["tier"] < 3]
+        .sort_values(["tier", "pfs_pulled_at"], ascending=[True, False])
+        .drop_duplicates(subset="node_id", keep="first")
+        .set_index("node_id")
+    )
+
+    # Stations whose every in-box observation disagrees with a known centroid
+    # by >15 km take the centroid instead (see docstring). Logged for review.
+    disputed = best[(best["tier"] == 2) & best["postcode_lat"].notna()]
+    if len(disputed):
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        qc_path = QC_DIR / f"coord_postcode_disagreement_{stamp}.csv"
+        disputed.reset_index()[[
+            "node_id", "modal_postcode", "latitude", "longitude", "dist_km",
+        ]].to_csv(qc_path, index=False)
+        print(
+            f"  {len(disputed)} stations have in-UK coordinates >"
+            f"{MAX_KM_FROM_POSTCODE:.0f} km from their postcode centroid, "
+            f"replaced with the centroid: {qc_path}"
+        )
+        best = best.drop(disputed.index)
+
+    canonical = modal_pc.set_index("node_id")[["postcode_lat", "postcode_long"]]
+    canonical = canonical.join(best[["latitude", "longitude"]], how="outer")
+    from_obs = canonical["latitude"].notna()
+    canonical["coord_source"] = None
+    canonical.loc[from_obs, "coord_source"] = "observed"
+    centroid_fill = ~from_obs & canonical["postcode_lat"].notna()
+    canonical.loc[centroid_fill, "latitude"] = canonical.loc[centroid_fill, "postcode_lat"]
+    canonical.loc[centroid_fill, "longitude"] = canonical.loc[centroid_fill, "postcode_long"]
+    canonical.loc[centroid_fill, "coord_source"] = "postcode_centroid"
+
+    df = df.copy()
+    had_coords = df["latitude"].notna()
+    df["latitude"] = df["node_id"].map(canonical["latitude"])
+    df["longitude"] = df["node_id"].map(canonical["longitude"])
+    df["coord_source"] = df["node_id"].map(canonical["coord_source"])
+
+    n_centroid = int((df["coord_source"] == "postcode_centroid").sum())
+    nulled = had_coords & df["latitude"].isna()
+    if nulled.any():
+        warnings.warn(
+            f"{int(nulled.sum())} price events "
+            f"({df.loc[nulled, 'node_id'].nunique()} stations) had coordinates "
+            "nulled: no valid observation in any snapshot and no postcode "
+            "centroid. They stay in silver without a location.",
+            stacklevel=2,
+        )
+    print(
+        "  Coordinates healed: "
+        f"{int((df['coord_source'] == 'observed').sum()):,} events from validated "
+        f"observations, {n_centroid:,} from postcode centroids "
+        f"({df.loc[df['coord_source'] == 'postcode_centroid', 'node_id'].nunique()} stations)"
+    )
+    return df
+
+
 def clean_silver(df: pd.DataFrame) -> pd.DataFrame:
     """
     Apply four cleaning steps to the enriched silver dataframe:
@@ -510,6 +664,9 @@ def main() -> None:
     else:
         print("  All price events matched to a PFS record.")
 
+    print("Healing station coordinates...")
+    enriched = heal_coordinates(enriched, pfs)
+
     print("Cleaning silver layer...")
     enriched = clean_silver(enriched)
 
@@ -518,7 +675,7 @@ def main() -> None:
         "price_change_effective_timestamp", "price_last_updated", "first_seen_at",
         "pfs_snapshot_used", "pfs_snapshot_is_fallback",
         "brand_name", "trading_name", "postcode",
-        "latitude", "longitude", "city", "county", "country",
+        "latitude", "longitude", "coord_source", "city", "county", "country",
         "is_motorway", "is_supermarket",
         "temporary_closure", "permanent_closure",
     ]
