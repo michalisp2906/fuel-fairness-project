@@ -1,0 +1,66 @@
+# Rebuilds the app's data whenever the Windows PC pushes new raw snapshots.
+#
+# Pipeline: build_silver.py -> build_features.py -> build_gold.py, all from
+# files already in the repo (no Fuel Finder API access, which blocks
+# data-centre IPs; collection stays on the Windows PC). Only the gold table
+# is committed back; silver and features are gitignored build artifacts.
+#
+# No trigger loop: this workflow only fires on changes under data/raw/,
+# the bot commit touches only data/gold/, and pushes made with the default
+# GITHUB_TOKEN do not trigger workflows anyway. Streamlit Community Cloud
+# redeploys the app on the bot's push.
+#
+# data/gold/ is CI-owned: avoid committing it manually, or a concurrent CI
+# push may conflict (a failed run heals on the next snapshot push).
+
+name: Rebuild app data
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "data/raw/**"
+  workflow_dispatch:
+
+# One rebuild at a time; a queued run supersedes waiting ones.
+concurrency:
+  group: rebuild-app-data
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Rebuild silver, features, and gold
+        run: |
+          uv run python build_silver.py
+          uv run python build_features.py
+          uv run python build_gold.py
+
+      - name: Commit updated app data
+        run: |
+          if git diff --quiet -- data/gold/app_data.parquet; then
+            echo "Gold table unchanged; nothing to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/gold/app_data.parquet
+          git commit -m "ci: rebuild app data from latest snapshots"
+          # A snapshot push may have landed while we were building.
+          git pull --rebase origin main
+          git push

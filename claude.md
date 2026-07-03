@@ -247,11 +247,17 @@ picture and phase order.
   snapshots and corroborated by town/country fields) and are logged to
   data/silver/qc/. postcode_lookup.parquet gained centroid columns for this
   (zstd-compressed, 27.5 MB, still committed).
-- NEXT: deploy on Streamlit Community Cloud (user account, point it at
-  app/streamlit_app.py on main; repo has uv.lock so Cloud should resolve
-  deps via uv, fall back to a requirements.txt if the build fails). Then a
-  GitHub Action that rebuilds silver+features+gold on each snapshot push
-  (no API access needed, raw data is in the repo), so the app self-updates.
+- DONE (2026-07-03): deployed on Streamlit Community Cloud from main,
+  entry file app/streamlit_app.py, deps resolved from uv.lock.
+- DONE (2026-07-03): GitHub Action .github/workflows/rebuild-app-data.yml.
+  Fires on pushes touching data/raw/ (the Task Scheduler pushes), rebuilds
+  silver+features+gold on the runner, commits data/gold/app_data.parquet if
+  changed; Streamlit Cloud redeploys on that commit. No trigger loop (bot
+  commit touches only data/gold/, outside the path filter, and GITHUB_TOKEN
+  pushes do not fire workflows). data/gold/ is CI-owned now: avoid committing
+  it manually. Wholesale refresh (build_external.py) is NOT in the Action
+  yet, so wholesale_prices.parquet still needs a manual weekly-ish re-run
+  and push; build_gold.py warns when it goes stale (>21 days).
   Collection stays on Windows.
 - AFTER deploy: Signal 2 modelling prep: temporal+spatial validation design,
   then LightGBM on Signal 1 residuals (needs lightgbm + scikit-learn added
