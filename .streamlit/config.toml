@@ -1,0 +1,9 @@
+# Streamlit theme aligned with the app's palette (see app/app_utils.py).
+[theme]
+primaryColor = "#2a78d6"
+textColor = "#0b0b0b"
+backgroundColor = "#fcfcfb"
+secondaryBackgroundColor = "#f0efec"
+
+[browser]
+gatherUsageStats = false

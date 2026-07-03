@@ -125,6 +125,13 @@ picture and phase order.
   overcharge_ppl > 3p buffer (~1 weekly std of the basis series). Known cost:
   month-level fair-price levels carry a few pence of drift uncertainty, shared
   by all stations, so cross-sectional comparisons are unaffected.
+- Gold layer for the app (decided 2026-07-03): data/gold/app_data.parquet
+  (build_gold.py) holds the latest price per station per modelled grade, with
+  fair price, overcharge, and flag RECOMPUTED against the current wholesale
+  week (same 10-day lag convention), not carried from the event date. A stale
+  standing price is judged on today's costs. Event-time values stay in the
+  feature layer for modelling. Gold IS committed to git (about 800 KB, zstd,
+  category dtypes) because the deployed app reads it from the repo clone.
 - Signal 2 feature exclusions (decided 2026-07-03): brand, is_motorway, and
   is_supermarket are all excluded as features (own-type attributes would
   normalise group-wide premiums). dist_nearest_supermarket_km STAYS (rival
@@ -212,11 +219,27 @@ picture and phase order.
   supermarkets 3%, rural 23% vs urban 7%), B7_STANDARD 22.4%. Top
   overchargers: motorway services and remote islands (Scilly, Gigha), which
   is face-valid. Remote-island delivery costs are a Signal 2 discussion item.
-- NEXT (decided 2026-07-03, deploy BEFORE Signal 2): walking-skeleton deploy.
-  Streamlit app on Community Cloud: UK map coloured by Signal 1 overcharge,
-  station lookup, methodology page. Then a GitHub Action that rebuilds
-  silver+features on each snapshot push (no API access needed, raw data is
-  in the repo), so the app self-updates. Collection stays on Windows.
+- DONE (2026-07-03, Windows PC): walking-skeleton Streamlit app built and
+  verified locally. app/streamlit_app.py (map page: pydeck scatter coloured
+  by overcharge on a diverging blue/gray/red scale, KPI tiles, filters),
+  app/pages/1_Station_lookup.py (searchable table), app/pages/2_Methodology.py.
+  Reads ONLY data/gold/app_data.parquet via app/app_utils.py. streamlit added
+  to pyproject dependencies. Verified via AppTest smoke tests plus headless
+  Edge screenshots driven over CDP (plain headless screenshots capture
+  Streamlit before websocket hydration; see cdp technique in session memory).
+- FINDING (2026-07-03): judged at current wholesale, 76% of diesel stations
+  are flagged (E10 21%). Cross-checked against DESNZ: national avg diesel
+  really is 7-9p above the fair line, wholesale fell sharply mid-June and
+  pump prices are following slowly (rocket-and-feathers, visibly). Also
+  found: a few stations have coordinates in the sea (API data errors, add a
+  coordinate sanity check to silver cleaning later), some postcodes arrive
+  unspaced (e.g. TF118TG).
+- NEXT: deploy on Streamlit Community Cloud (user account, point it at
+  app/streamlit_app.py on main; repo has uv.lock so Cloud should resolve
+  deps via uv, fall back to a requirements.txt if the build fails). Then a
+  GitHub Action that rebuilds silver+features+gold on each snapshot push
+  (no API access needed, raw data is in the repo), so the app self-updates.
+  Collection stays on Windows.
 - AFTER deploy: Signal 2 modelling prep: temporal+spatial validation design,
   then LightGBM on Signal 1 residuals (needs lightgbm + scikit-learn added
   to pyproject). Then rocket-and-feathers, wire into app, write-up.
