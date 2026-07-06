@@ -274,6 +274,22 @@ picture and phase order.
 - AFTER deploy: Signal 2 modelling prep: temporal+spatial validation design,
   then LightGBM on Signal 1 residuals (needs lightgbm + scikit-learn added
   to pyproject). Then rocket-and-feathers, wire into app, write-up.
+- DECIDED (2026-07-06): Signal 2 unit of observation is station-week (mean
+  overcharge_ppl per station per week), separate models per fuel, E10 first
+  (quarantines the diesel proxy basis error). Per-event weighting rejected
+  (frequent repricers would dominate); pure per-station rejected (no time
+  axis left for temporal validation). Known limitation, documented: only
+  ~2 dense weeks collected so far and one market regime (falling wholesale,
+  rocket-and-feathers), so temporal validation starts thin (train week 1,
+  check week 2) and strengthens as history accumulates; cross-sectional
+  ranking across ~8,000 stations is the part that is already well-powered.
+- TO DISCUSS: user away for all of August 2026, Windows PC off, so
+  collection stops (API needs a residential IP, cloud collection is not an
+  option) and the manual weekly wholesale refresh stops too (app fair
+  prices go stale; build_gold warns at 21 days). Options to weigh nearer
+  the time: spare always-on machine on home network, Raspberry Pi,
+  relative's machine, or accept and document the gap. Keep-alive and CI
+  are cloud-side and unaffected.
 - EDA review done 2026-07-03. Note: project started ~2026-06-24, so the
   plan's "week N" schedule does not map to calendar weeks; actual pace is
   much faster.
