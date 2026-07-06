@@ -161,6 +161,25 @@ def load_all_pfs() -> pd.DataFrame:
         frames.append(df)
 
     pfs = pd.concat(frames, ignore_index=True)
+
+    # Guard: the API pages by batch-number, so one pull can list a station
+    # twice if the dataset shifts between page requests (seen 2026-07-03:
+    # identical duplicate record across batches). Keep one row per
+    # (node_id, pfs_pulled_at) or the silver join fans out and crashes.
+    dup_mask = pfs.duplicated(subset=["node_id", "pfs_pulled_at"], keep="last")
+    if dup_mask.any():
+        n_dropped = int(dup_mask.sum())
+        n_identical = int(pfs.duplicated(keep="last").sum())
+        if n_dropped > n_identical:
+            warnings.warn(
+                f"{n_dropped - n_identical} duplicate (station, snapshot) PFS "
+                "rows have CONFLICTING station details; keeping the last "
+                "occurrence. Investigate the affected snapshots.",
+                stacklevel=2,
+            )
+        print(f"  Dropped {n_dropped} duplicate (station, snapshot) PFS rows")
+        pfs = pfs[~dup_mask]
+
     print(
         f"  Loaded {len(paths)} PFS snapshots, "
         f"{pfs['node_id'].nunique()} unique stations across all snapshots"
