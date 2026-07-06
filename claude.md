@@ -283,6 +283,17 @@ picture and phase order.
   rocket-and-feathers), so temporal validation starts thin (train week 1,
   check week 2) and strengthens as history accumulates; cross-sectional
   ranking across ~8,000 stations is the part that is already well-powered.
+- PENDING (Signal 2 Decision 2, options presented 2026-07-06, user to
+  choose): validation design. All rows for a station stay on one side of
+  any split (non-negotiable). Spatial grouping options: MSOA (free but too
+  small, 5km competition features leak across boundaries), region (no
+  leakage but harder question than needed, only 12 folds), ~25km grid
+  cells (recommended: block size reasoned from the 5km rival radius,
+  5-fold GroupKFold, minor border leakage documented). Temporal side:
+  train week 1, check week 2 for now, grows into proper multi-week folds
+  as history accumulates. Decisions 3 (remote-island feature) and 4
+  (metrics: MAE vs predict-zero and regional-median baselines, rank
+  stability) also still open.
 - TO DISCUSS: user away for all of August 2026, Windows PC off, so
   collection stops (API needs a residential IP, cloud collection is not an
   option) and the manual weekly wholesale refresh stops too (app fair
