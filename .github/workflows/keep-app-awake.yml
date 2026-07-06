@@ -1,0 +1,50 @@
+# Keeps the Streamlit Community Cloud app from hibernating.
+#
+# Community Cloud sleeps any app without traffic for 12 hours, and shows
+# recruiters a "this app has gone to sleep" page instead of the app. Only a
+# real browser session counts as traffic: repo commits do not (the
+# rebuild-app-data pushes do not help), and neither does a bare HTTP GET.
+#
+# So every 6 hours this renders the app in headless Chromium via
+# .github/scripts/keep_alive.py, which also clicks the wake-up button if the
+# app somehow fell asleep anyway. A failed run means the app could not be
+# rendered; GitHub emails a failure notification, so investigate those.
+#
+# Note: GitHub disables cron workflows after 60 days without repo activity.
+# The weekday snapshot pushes keep this repo active, so that should never
+# trigger; if collection is ever paused for two months, this stops too.
+
+name: Keep app awake
+
+on:
+  schedule:
+    # Every 6 hours. Offset from the top of the hour because GitHub delays
+    # on-the-hour cron jobs the most. Max gap is 6h against a 12h sleep
+    # window, so even a badly delayed run has plenty of margin.
+    - cron: "23 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Playwright is CI-only tooling, deliberately not a project dependency.
+      - name: Install Playwright
+        run: |
+          pip install --quiet playwright
+          playwright install --with-deps chromium
+
+      - name: Visit the app
+        env:
+          APP_URL: https://fuel-fairness-project.streamlit.app/
+        run: python .github/scripts/keep_alive.py
