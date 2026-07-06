@@ -30,7 +30,7 @@ permissions:
 jobs:
   ping:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -48,3 +48,13 @@ jobs:
         env:
           APP_URL: https://fuel-fairness-project.streamlit.app/
         run: python .github/scripts/keep_alive.py
+
+      - name: Upload failure dump
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: keep-alive-failure
+          path: |
+            keep_alive_failure.png
+            keep_alive_failure.html
+          if-no-files-found: ignore
