@@ -7,11 +7,15 @@ repo commits do not either, see streamlit/streamlit#10812). So this script
 opens the app in headless Chromium, which establishes the websocket session
 Streamlit counts as a visit, and waits for the app to actually render.
 
-If the app has gone to sleep, the page shows a "Yes, get this app back up!"
-button instead; click it and wait for the app to boot. A cold boot
-reinstalls the app's dependencies and can take several minutes, and the
-sleep page does not always transition on its own, so the wait is a
-reload-and-retry loop with a long overall budget.
+Community Cloud serves a host shell page and embeds the actual app in an
+iframe (title "streamlitApp", src /~/+/), so every check searches ALL
+frames, not just the top-level page.
+
+If the app has gone to sleep, a "Yes, get this app back up!" button appears
+instead; click it and wait for the app to boot. A cold boot reinstalls the
+app's dependencies and can take several minutes, and the sleep page does not
+always transition on its own, so the wait loop reloads the page
+periodically within a long overall budget.
 
 Any failure exits nonzero (after saving a screenshot and page dump for the
 workflow to upload as an artifact) so the run fails and GitHub sends a
@@ -26,7 +30,6 @@ import sys
 import time
 
 from playwright.sync_api import sync_playwright
-from playwright.sync_api import TimeoutError as PlaywrightTimeout
 
 APP_URL = os.environ["APP_URL"]
 
@@ -38,21 +41,45 @@ APP_RENDERED_SELECTOR = '[data-testid="stAppViewContainer"]'
 WAKE_BUTTON_PATTERN = re.compile(r"get this app back up|wake", re.IGNORECASE)
 
 # Overall budget for the app to render, covering a cold boot that has to
-# reinstall dependencies. Between attempts the page is reloaded, because the
-# sleep page does not always transition to the booted app by itself.
+# reinstall dependencies (observed to exceed 5 minutes).
 RENDER_BUDGET_S = 720
-ATTEMPT_TIMEOUT_MS = 60_000
+POLL_INTERVAL_S = 3
+# Reload periodically while waiting: the sleep page does not always
+# transition to the booted app on its own.
+RELOAD_EVERY_S = 90
 
 FAILURE_SCREENSHOT = "keep_alive_failure.png"
 FAILURE_HTML = "keep_alive_failure.html"
 
 
+def app_is_rendered(page) -> bool:
+    """True if any frame contains a rendered Streamlit app container."""
+    for frame in page.frames:
+        try:
+            if frame.locator(APP_RENDERED_SELECTOR).count() > 0:
+                return True
+        except Exception:
+            continue  # frames can detach mid-check during reloads
+    return False
+
+
+def click_wake_button(page) -> bool:
+    """Click the hibernation page's wake-up button in whichever frame has it."""
+    for frame in page.frames:
+        try:
+            button = frame.get_by_role("button", name=WAKE_BUTTON_PATTERN)
+            if button.count() > 0:
+                button.first.click(timeout=5_000)
+                return True
+        except Exception:
+            continue
+    return False
+
+
 def describe(page) -> str:
-    """One line of page state for the log: title plus start of body text."""
+    """One line of page state for the log."""
     try:
-        body = page.locator("body").inner_text(timeout=5_000)
-        snippet = " ".join(body.split())[:200]
-        return f"title={page.title()!r} body={snippet!r}"
+        return f"title={page.title()!r} frames={len(page.frames)}"
     except Exception as exc:
         return f"(could not read page state: {exc})"
 
@@ -66,37 +93,34 @@ def main() -> None:
             page.goto(APP_URL, wait_until="domcontentloaded", timeout=60_000)
             print(f"Landed: {describe(page)}")
 
-            try:
-                page.get_by_role("button", name=WAKE_BUTTON_PATTERN).click(
-                    timeout=10_000
-                )
-                print("App was asleep: clicked the wake-up button.")
-            except PlaywrightTimeout:
-                print("No wake-up button found: app appears to be awake.")
-
             deadline = time.monotonic() + RENDER_BUDGET_S
-            attempt = 0
-            while True:
-                attempt += 1
-                try:
-                    page.wait_for_selector(
-                        APP_RENDERED_SELECTOR, timeout=ATTEMPT_TIMEOUT_MS
+            last_reload = time.monotonic()
+            woke = False
+            while not app_is_rendered(page):
+                if not woke and click_wake_button(page):
+                    woke = True
+                    print("App was asleep: clicked the wake-up button.")
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(
+                        f"App did not render within {RENDER_BUDGET_S}s. "
+                        f"{describe(page)}"
                     )
-                    break
-                except PlaywrightTimeout:
-                    remaining = deadline - time.monotonic()
+                if time.monotonic() - last_reload > RELOAD_EVERY_S:
                     print(
-                        f"Attempt {attempt}: not rendered yet "
-                        f"({remaining:.0f}s of budget left). {describe(page)}"
+                        f"Not rendered yet ({remaining:.0f}s of budget left), "
+                        f"reloading. {describe(page)}"
                     )
-                    if remaining <= 0:
-                        raise
                     page.reload(wait_until="domcontentloaded", timeout=60_000)
+                    last_reload = time.monotonic()
+                page.wait_for_timeout(POLL_INTERVAL_S * 1_000)
 
+            if not woke:
+                print("App was already awake.")
             # Hold the websocket open briefly so the session registers as
             # traffic.
             page.wait_for_timeout(10_000)
-            print(f"App rendered on attempt {attempt}. Visit registered.")
+            print(f"App rendered. Visit registered. {describe(page)}")
         except Exception:
             try:
                 page.screenshot(path=FAILURE_SCREENSHOT, full_page=True)
