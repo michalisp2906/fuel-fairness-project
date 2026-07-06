@@ -248,7 +248,19 @@ picture and phase order.
   data/silver/qc/. postcode_lookup.parquet gained centroid columns for this
   (zstd-compressed, 27.5 MB, still committed).
 - DONE (2026-07-03): deployed on Streamlit Community Cloud from main,
-  entry file app/streamlit_app.py, deps resolved from uv.lock.
+  entry file app/streamlit_app.py, deps resolved from uv.lock. App URL:
+  https://fuel-fairness-project.streamlit.app
+- DONE (2026-07-06): keep-alive workflow .github/workflows/keep-app-awake.yml.
+  Community Cloud sleeps apps after 12h without traffic; commits and bare
+  HTTP GETs do not count, only a real browser session does. Every 6 hours
+  the Action renders the app in headless Chromium (Playwright, CI-only
+  dependency) via .github/scripts/keep_alive.py and clicks the wake-up
+  button if the app fell asleep anyway. A failed run emails the repo owner;
+  investigate those, the app may be showing recruiters the sleep page.
+- DONE (2026-07-06): fixed rebuild-app-data crash. One PFS snapshot
+  (2026-07-03T14:13Z) listed a station twice across API batch pages;
+  load_all_pfs now dedups on (node_id, pfs_pulled_at), warning loudly if
+  duplicates ever conflict.
 - DONE (2026-07-03): GitHub Action .github/workflows/rebuild-app-data.yml.
   Fires on pushes touching data/raw/ (the Task Scheduler pushes), rebuilds
   silver+features+gold on the runner, commits data/gold/app_data.parquet if
