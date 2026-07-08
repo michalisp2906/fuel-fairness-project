@@ -283,17 +283,24 @@ picture and phase order.
   rocket-and-feathers), so temporal validation starts thin (train week 1,
   check week 2) and strengthens as history accumulates; cross-sectional
   ranking across ~8,000 stations is the part that is already well-powered.
-- PENDING (Signal 2 Decision 2, options presented 2026-07-06, user to
-  choose): validation design. All rows for a station stay on one side of
-  any split (non-negotiable). Spatial grouping options: MSOA (free but too
-  small, 5km competition features leak across boundaries), region (no
-  leakage but harder question than needed, only 12 folds), ~25km grid
-  cells (recommended: block size reasoned from the 5km rival radius,
-  5-fold GroupKFold, minor border leakage documented). Temporal side:
-  train week 1, check week 2 for now, grows into proper multi-week folds
-  as history accumulates. Decisions 3 (remote-island feature) and 4
-  (metrics: MAE vs predict-zero and regional-median baselines, rank
-  stability) also still open.
+- DECIDED (2026-07-08, Signal 2 Decision 2): validation design. All rows
+  for a station stay on one side of any split (non-negotiable). Spatial
+  grouping: ~25km grid cells, 5-fold GroupKFold. Block size reasoned from
+  the 5km rival radius, so only border stations can leak competition
+  features across folds (minor, documented). MSOA rejected (smaller than
+  the competition radius, heavy leakage); region rejected (12 groups,
+  tests transfer to unseen regions, harder than the use case needs).
+  Temporal side: train week 1, check week 2 for now, grows into proper
+  multi-week folds as history accumulates.
+- DECIDED (2026-07-08, Signal 2 Decision 3): remote islands (Scilly,
+  Gigha, etc.) follow the motorway precedent: excluded from Signal 2
+  training, reported as their own comparison group. No invented
+  delivery-cost feature (no data to calibrate it, and it would risk
+  normalising island monopoly pricing).
+- PENDING (Signal 2 Decision 4, user chose "refine first" 2026-07-08):
+  evaluation metrics. Draft suite (MAE vs predict-zero and
+  regional-median baselines, rank stability) to be refined before
+  locking in.
 - TO DISCUSS: user away for all of August 2026, Windows PC off, so
   collection stops (API needs a residential IP, cloud collection is not an
   option) and the manual weekly wholesale refresh stops too (app fair
