@@ -287,7 +287,7 @@ def join_location_features(stations: pd.DataFrame) -> pd.DataFrame:
         out["postcode"].str.replace(r"\s+", "", regex=True).str.upper()
     )
     out = out.merge(
-        postcodes[["pcd_key", "msoa21cd", "ruc21desc", "ruc_2fold"]],
+        postcodes[["pcd_key", "msoa21cd", "region", "ruc21desc", "ruc_2fold"]],
         on="pcd_key", how="left",
     )
     pc_match = out["msoa21cd"].notna().mean()

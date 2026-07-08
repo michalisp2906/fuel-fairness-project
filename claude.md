@@ -155,8 +155,11 @@ picture and phase order.
   Superseded for modelling by the RUC21 indicator in postcode_lookup.parquet.
 - postcode_lookup.parquet: NSPL (May 2026) per-postcode lookup: unit-postcode
   centroid (postcode_lat/postcode_long, float32, used by coordinate healing
-  in build_silver.py), 2021 MSOA code
-  and RUC21 rural-urban indicator. 2.7M postcodes incl. terminated. The source
+  in build_silver.py), 2021 MSOA code, RUC21 rural-urban indicator, and
+  region (added 2026-07-08 from NSPL rgn25cd: 9 English regions plus Wales,
+  Scotland, Northern Ireland mapped from pseudo-codes, 12 groups total;
+  used by the Signal 2 regional-median baseline). 2.7M postcodes incl.
+  terminated. The source
   zip (~180MB) is gitignored and re-downloaded by build_external.py if missing;
   the release-specific ArcGIS item id is a constant in that script, update it
   quarterly if refreshing.
@@ -271,9 +274,24 @@ picture and phase order.
   yet, so wholesale_prices.parquet still needs a manual weekly-ish re-run
   and push; build_gold.py warns when it goes stale (>21 days).
   Collection stays on Windows.
-- AFTER deploy: Signal 2 modelling prep: temporal+spatial validation design,
-  then LightGBM on Signal 1 residuals (needs lightgbm + scikit-learn added
-  to pyproject). Then rocket-and-feathers, wire into app, write-up.
+- DONE (2026-07-08): Signal 2 validation harness (signal2_validation.py,
+  lightgbm + scikit-learn added to pyproject). Station-week table per fuel,
+  exclusions (motorway, ferry-dependent islands by postcode district,
+  closed, no coords), ~25km grid cells, 5-fold GroupKFold, predict-zero and
+  regional-median baselines, locked metric suite, out-of-fold predictions
+  saved to data/features/signal2_cv_{fuel}.parquet (gitignored). Islands
+  are identified by a documented postcode-district list (no fixed road
+  link; Skye/Anglesey have bridges so stay in). Model deliberately untuned.
+  First E10 results (14,732 station-weeks, 7,386 stations, 4 dense weeks,
+  415 cells): spatial OOF MAE 2.75 vs 3.50 predict-zero vs 2.82 regional
+  median; per-week Spearman 0.461 vs 0.348; top-decile capture 23.9% vs
+  12.9% (random 10%). Temporal check (train 3 weeks, test w/c 2026-07-06):
+  MAE 2.95 vs 3.27/3.42, Spearman 0.664 (looks better than spatial CV
+  because train and test share stations; it is the regime-shift test, not
+  the unseen-station test, caveat in docstring). Leftover score stability
+  rho 0.85-0.93 week over week. Next: user review of results, then B7
+  run, feature importance inspection, wire Signal 2 into gold/app.
+- AFTER Signal 2: rocket-and-feathers, wire into app, write-up.
 - DECIDED (2026-07-06): Signal 2 unit of observation is station-week (mean
   overcharge_ppl per station per week), separate models per fuel, E10 first
   (quarantines the diesel proxy basis error). Per-event weighting rejected

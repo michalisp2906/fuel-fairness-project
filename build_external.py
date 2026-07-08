@@ -94,6 +94,23 @@ _RUC21_DESC = {
 }
 _RUC21_RURAL_CODES = {"RLF1", "RLN1", "RSF1", "RSN1", "5", "6"}
 
+# Region names for rgn25cd, from "RGN Region names and codes EN as at 05_25.csv"
+# inside the NSPL zip (Documents/). Regions exist for England only; Wales,
+# Scotland and Northern Ireland carry pseudo-codes (W/S/N + 9s) and are mapped
+# to their country name by first letter, giving 12 groups UK-wide.
+_REGION_NAMES = {
+    "E12000001": "North East",
+    "E12000002": "North West",
+    "E12000003": "Yorkshire and The Humber",
+    "E12000004": "East Midlands",
+    "E12000005": "West Midlands",
+    "E12000006": "East of England",
+    "E12000007": "London",
+    "E12000008": "South East",
+    "E12000009": "South West",
+}
+_REGION_PSEUDO_PREFIX = {"W": "Wales", "S": "Scotland", "N": "Northern Ireland"}
+
 
 def build_desnz_pump_prices() -> pd.DataFrame:
     df = pd.read_csv(RAW_DESNZ_CSV)
@@ -219,7 +236,7 @@ def build_postcode_lookup() -> pd.DataFrame:
     else:
         print(f"  Using cached {RAW_NSPL_ZIP}")
 
-    usecols = ["pcds", "doterm", "msoa21cd", "ruc21ind", "lat", "long"]
+    usecols = ["pcds", "doterm", "msoa21cd", "ruc21ind", "rgn25cd", "lat", "long"]
     frames = []
     with zipfile.ZipFile(RAW_NSPL_ZIP) as zf:
         csv_names = [
@@ -248,6 +265,12 @@ def build_postcode_lookup() -> pd.DataFrame:
     # Pseudo-codes like E99999999 mean "not allocated", not a real MSOA.
     out.loc[out["msoa21cd"].str.endswith("99999999", na=False), "msoa21cd"] = pd.NA
 
+    out["region"] = out["rgn25cd"].map(_REGION_NAMES)
+    pseudo = out["region"].isna() & out["rgn25cd"].notna()
+    out.loc[pseudo, "region"] = out.loc[pseudo, "rgn25cd"].str[0].map(
+        _REGION_PSEUDO_PREFIX
+    )
+
     out["ruc21desc"] = out["ruc21ind"].map(_RUC21_DESC)
     out["ruc_2fold"] = pd.Series(pd.NA, index=out.index, dtype="object")
     known = out["ruc21ind"].isin(_RUC21_DESC)
@@ -259,7 +282,7 @@ def build_postcode_lookup() -> pd.DataFrame:
         print(f"  WARNING: unknown RUC21 codes left unclassified: {sorted(unknown)}")
 
     cols = ["pcd_key", "pcds", "postcode_lat", "postcode_long",
-            "msoa21cd", "ruc21ind", "ruc21desc", "ruc_2fold",
+            "msoa21cd", "region", "ruc21ind", "ruc21desc", "ruc_2fold",
             "is_terminated"]
     out = out[cols]
     dupes = out["pcd_key"].duplicated().sum()
