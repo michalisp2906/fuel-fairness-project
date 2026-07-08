@@ -297,10 +297,20 @@ picture and phase order.
   training, reported as their own comparison group. No invented
   delivery-cost feature (no data to calibrate it, and it would risk
   normalising island monopoly pricing).
-- PENDING (Signal 2 Decision 4, user chose "refine first" 2026-07-08):
-  evaluation metrics. Draft suite (MAE vs predict-zero and
-  regional-median baselines, rank stability) to be refined before
-  locking in.
+- DECIDED (2026-07-08, Signal 2 Decision 4): evaluation metrics.
+  Accuracy is a gate, not a target (a perfectly accurate model would
+  explain away all overcharging, so we do not tune for minimum error).
+  Suite: (1) headline held-out Spearman between predicted and actual
+  station-week overcharge (rank skill is the job, and ranks are immune
+  to the shared basis drift); (2) MAE (RMSE reported alongside) vs two
+  within-fold baselines: predict-zero (Signal 1 alone) and
+  regional-median overcharge (grid-cell median is uncomputable under
+  grid-cell GroupKFold because held-out cells have no training
+  stations, which is evidence the CV is doing its job); (3) top-decile
+  capture (share of truly worst-decile stations the model also puts in
+  its worst decile); (4) week-over-week Spearman stability of the
+  leftover score (actual minus predicted), preliminary while history
+  is thin, grows into a stability curve.
 - TO DISCUSS: user away for all of August 2026, Windows PC off, so
   collection stops (API needs a residential IP, cloud collection is not an
   option) and the manual weekly wholesale refresh stops too (app fair
