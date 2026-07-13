@@ -291,6 +291,13 @@ picture and phase order.
   the unseen-station test, caveat in docstring). Leftover score stability
   rho 0.85-0.93 week over week. Next: user review of results, then B7
   run, feature importance inspection, wire Signal 2 into gold/app.
+- DONE (2026-07-13): fixed silent snapshot-push failure. run_collection.ps1
+  pushed without pulling and ignored the push exit code, so after the CI bot
+  pushed a gold rebuild to main on 2026-07-08 every scheduled push from
+  2026-07-09 onward was rejected (non-fast-forward) while the log claimed
+  success. Eight snapshot commits sat local-only and app data went stale for
+  5 days. Fixed: rebased and pushed the backlog, and the script now does
+  git pull --rebase before push and exits loudly if pull or push fails.
 - AFTER Signal 2: rocket-and-feathers, wire into app, write-up.
 - DECIDED (2026-07-06): Signal 2 unit of observation is station-week (mean
   overcharge_ppl per station per week), separate models per fuel, E10 first
