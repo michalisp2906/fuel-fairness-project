@@ -1,0 +1,64 @@
+# Weekly refresh of the NYMEX wholesale proxy (data/external/wholesale_prices.parquet).
+#
+# The wholesale refresh was a manual weekly-ish job on the Windows PC, which
+# stops whenever that PC is off (e.g. travel). yfinance has no residential-IP
+# constraint (unlike Fuel Finder collection), so this one can run in the cloud.
+# build_gold.py warns when wholesale is >21 days stale; a weekly run stays well
+# inside that.
+#
+# Only the wholesale step runs (build_external.py --wholesale-only): the other
+# steps read large gitignored raw source files that are not on the runner.
+#
+# No trigger loop: this commits only under data/external/, outside the
+# data/raw/** filter that fires "Rebuild app data", and GITHUB_TOKEN pushes do
+# not trigger workflows anyway. The gold table picks up the refreshed wholesale
+# on the next snapshot-triggered rebuild (build_gold.py reads this file), so
+# fair prices stay current as long as collection is running.
+
+name: Refresh wholesale prices
+
+on:
+  schedule:
+    # Mondays 07:00 UTC: futures are closed over the weekend, so this captures
+    # the prior week in full.
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: refresh-wholesale
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Refresh wholesale prices
+        run: uv run python build_external.py --wholesale-only
+
+      - name: Commit updated wholesale prices
+        run: |
+          if git diff --quiet -- data/external/wholesale_prices.parquet; then
+            echo "Wholesale prices unchanged; nothing to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/external/wholesale_prices.parquet
+          git commit -m "ci: refresh wholesale prices"
+          # A snapshot or gold rebuild may have landed while we were running.
+          git pull --rebase origin main
+          git push

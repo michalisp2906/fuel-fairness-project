@@ -51,6 +51,7 @@ Fuel duty was cut from 57.95p to 52.95p on 28 March 2022 and has remained
 at 52.95p/litre since. The DESNZ CSV reflects this correctly.
 """
 
+import argparse
 import zipfile
 
 import pandas as pd
@@ -160,6 +161,23 @@ def build_wholesale_prices(start: str = "2018-01-01") -> pd.DataFrame:
     )
 
     return weekly[["petrol_wholesale_ppl", "diesel_wholesale_ppl", "gbpusd"]].reset_index()
+
+
+def refresh_wholesale() -> None:
+    """Refresh only data/external/wholesale_prices.parquet.
+
+    Self-contained: needs internet (yfinance) but none of the large gitignored
+    raw source files the other steps read, so this is the step the weekly CI
+    wholesale refresh runs via `python build_external.py --wholesale-only`.
+    """
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    wholesale = build_wholesale_prices()
+    wholesale.to_parquet(DATA_DIR / "wholesale_prices.parquet", index=False)
+    print(f"  {len(wholesale)} weeks, {wholesale['date'].min().date()} to "
+          f"{wholesale['date'].max().date()}")
+    last = wholesale.iloc[-1]
+    print(f"  Latest: petrol wholesale {last['petrol_wholesale_ppl']:.1f}p/L, "
+          f"diesel {last['diesel_wholesale_ppl']:.1f}p/L, GBP/USD {last['gbpusd']:.4f}")
 
 
 def build_msoa_house_prices() -> pd.DataFrame:
@@ -303,13 +321,7 @@ def main():
     print(f"  Current duty: {pump['ulsp_duty_ppl'].iloc[-1]}p/litre")
 
     print("\n[2/5] Wholesale prices from yfinance...")
-    wholesale = build_wholesale_prices()
-    wholesale.to_parquet(DATA_DIR / "wholesale_prices.parquet", index=False)
-    print(f"  {len(wholesale)} weeks, {wholesale['date'].min().date()} to "
-          f"{wholesale['date'].max().date()}")
-    last = wholesale.iloc[-1]
-    print(f"  Latest: petrol wholesale {last['petrol_wholesale_ppl']:.1f}p/L, "
-          f"diesel {last['diesel_wholesale_ppl']:.1f}p/L, GBP/USD {last['gbpusd']:.4f}")
+    refresh_wholesale()
 
     print("\n[3/5] ONS MSOA house prices...")
     house = build_msoa_house_prices()
@@ -342,4 +354,17 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Build external reference data.")
+    parser.add_argument(
+        "--wholesale-only",
+        action="store_true",
+        help="Refresh only wholesale_prices.parquet (yfinance). Used by the "
+             "weekly CI refresh; needs internet but none of the large raw "
+             "source files the other steps require.",
+    )
+    args = parser.parse_args()
+    if args.wholesale_only:
+        print("Wholesale prices from yfinance (wholesale-only)...")
+        refresh_wholesale()
+    else:
+        main()
