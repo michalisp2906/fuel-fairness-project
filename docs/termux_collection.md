@@ -5,19 +5,36 @@ the same `fuel_snapshot.py` collector and pushes snapshots to GitHub, driven by
 `run_collection.sh` (the bash port of `run_collection.ps1`) on a cron schedule
 inside Termux.
 
-## Known unknown before you rely on this
+## RESOLVED 2026-08-02: you need a UK VPN on the phone
 
-The Fuel Finder API blocks data-centre IPs. We have confirmed it answers a UK
-residential IP and refuses a data-centre (VPN) IP, but we have NOT confirmed it
-answers a **non-UK residential/mobile** IP, because no commercial VPN offers
-one to test with. So the only real test is running a collection from the phone
-on the actual foreign mobile network once you are there.
+This section previously flagged an open question about whether a non-UK
+residential/mobile IP would be accepted. It was tested in Cyprus on 2026-08-02.
+The answer:
 
-Do all the setup below on UK wifi first, and confirm a snapshot pushes
-successfully from home. Then the only variable left when you travel is the IP.
-On arrival, run one manual collection (`bash run_collection.sh`). If a snapshot
-lands, you are collecting for the whole trip. If it returns HTTP 403, the API
-is geo/residential-fussy, and we document the gap as a limitation.
+- **A foreign mobile IP is REFUSED.** Collection from a Cypriot consumer ISP
+  (EPIC) returned `403` at the token step. Not a credentials problem: even the
+  plain homepage 403s from Cyprus, and the response is `server: CloudFront` with
+  an empty body, meaning the CDN edge drops the request before the application
+  ever sees it.
+- **A commercial VPN with a UK exit WORKS**, even on a pure data-centre IP range
+  (tested: Datacamp Ltd / cdn77.com). The earlier project assumption that the API
+  blocks data-centre IPs was wrong. The block is purely **geographic**.
+- **Verified end to end** on 2026-08-02: a real collection from the phone over a
+  UK VPN exit succeeded, pushed (commit c3b4897, 7,998 stations, payload
+  complete), and CI rebuilt the app 70 seconds later.
+
+So: **the phone must be on a VPN with a UK exit whenever cron fires.** See
+"Keeping the VPN up" below, which is the part most likely to bite you.
+
+Diagnostic tell if collection starts failing:
+
+| Symptom | Meaning |
+| --- | --- |
+| `403`, empty body, `server: CloudFront` | Geo-block. The VPN is down or not on a UK exit. |
+| `401` + JSON `"Invalid client credentials"` from `nginx` | You got through. The problem is the credentials in `.env`. |
+
+Still do the setup below on UK wifi first, so that when you travel the only new
+variable is the VPN.
 
 ## One-time setup (do on UK wifi)
 
@@ -137,6 +154,25 @@ sampling gap, for example every 2 hours daily:
 If you change the cadence, note it in the write-up so the sampling record stays
 honest.
 
+## Keeping the VPN up (added 2026-08-02, read this)
+
+Cron does not know or care whether the tunnel is up. It fires at 09:00 whether
+or not you are on a UK exit. The failure mode to avoid is: tunnel drops, cron
+fires, request 403s, and the failure is recorded in a log nobody reads.
+
+In Android Settings > Network & internet > VPN, on the gear icon next to your
+provider, enable **both**:
+
+- **Always-on VPN**, so the tunnel comes back by itself and survives reboots.
+- **Block connections without VPN** (kill switch), so a dropped tunnel fails
+  cleanly instead of quietly reaching out on the local Cypriot IP.
+
+Some providers require you to use their own always-on setting instead of
+Android's. Either is fine, as long as it reconnects unattended.
+
+Sanity check after any reboot or SIM/wifi change: `curl -s https://ipinfo.io/json`
+in Termux should report `"country": "GB"`.
+
 ## Survive reboots (Termux:Boot)
 
 Create a boot script so cron and the wake-lock come back after a restart:
@@ -161,9 +197,17 @@ After any reboot you must unlock the phone once for Termux:Boot to fire.
 - The CI rebuild of `data/gold/app_data.parquet` runs automatically on each
   snapshot push, so the live app keeps updating as long as pushes land.
 
-## Not covered by this: the wholesale refresh
+## Not covered by this: the wholesale refresh (DONE, 2026-07-31)
 
-`build_external.py` (NYMEX wholesale via yfinance) still needs a periodic run,
-and `build_gold.py` warns when wholesale is >21 days stale. yfinance is not
-IP-restricted, so this one can and should move into a GitHub Action rather than
-onto the phone. Track that separately.
+`build_external.py` (NYMEX wholesale via yfinance) needs a periodic run, and
+`build_gold.py` warns when wholesale is >21 days stale. yfinance is not
+IP-restricted, so this moved into a GitHub Action rather than onto the phone:
+`.github/workflows/refresh-wholesale.yml`, Mondays 07:00 UTC. Nothing to do on
+the phone.
+
+Caveat worth knowing: that Action commits to `data/external/`, but the app
+rebuild (`rebuild-app-data.yml`) only triggers on `data/raw/` pushes. So a
+wholesale refresh alone does NOT reprice the app. Fair prices stay current only
+while collection is pushing snapshots. If the phone goes quiet for a stretch,
+the app freezes on stale wholesale and the overcharge flag inflates. See the
+OPEN item in `CLAUDE.md` for the proposed fix.

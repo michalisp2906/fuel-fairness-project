@@ -40,9 +40,14 @@ picture and phase order.
 - No corporate filler.
 
 ## Environment
-- Two machines, two roles. Collection (`fuel_snapshot.py`, Task Scheduler) runs
-  ONLY on the Windows PC, because the API blocks data-centre IPs and the scheduled
-  task needs a residential IP. Do not move collection to the Mac or any cloud runner.
+- THROUGH AUGUST 2026: all development is on the **MacBook only** (user is in
+  Cyprus, Windows PC is off). Assume bash/zsh, never PowerShell, until the user
+  says otherwise. Collection runs on the Android phone, not the PC.
+- Collection (`fuel_snapshot.py`) normally runs on the Windows PC via Task
+  Scheduler. It requires a **UK-geolocating** connection (see "API access is
+  geo-blocked" below). An Android phone in Termux is a proven second collector.
+- Three machines now: Windows PC (primary collector), MacBook Pro (analysis),
+  Android phone (backup collector, see `docs/termux_collection.md`).
 - Windows PC: Windows, PowerShell (not bash). Terminal commands must be PowerShell
   syntax. Runs collection plus any development work done there.
 - MacBook Pro: zsh/bash. Used for analysis and development (`build_silver.py`,
@@ -67,16 +72,53 @@ picture and phase order.
 - Fuel grades: API uses E10, E5, B7_STANDARD, B7_PREMIUM, B10, HVO. The twice-daily
   CSV abbreviates diesel as B7S and B7P. Handle both naming conventions.
 
+## API access is GEO-blocked, not data-centre-blocked (corrected 2026-08-02)
+Supersedes the earlier "the API refuses data-centre IPs" claim, which was wrong.
+That was a misdiagnosis: the original VPN test almost certainly used a non-UK
+exit, so a geo-block got recorded as a hosting-type block.
+
+Evidence gathered 2026-08-02 (user in Cyprus):
+- From a Cypriot consumer ISP (EPIC, mobile/residential), EVERY request 403s,
+  including the plain homepage with a normal browser User-Agent. Response is
+  `server: CloudFront`, `content-length: 0`. The 403 comes from the CDN edge;
+  the request never reaches the application.
+- From a commercial VPN with a UK exit on a pure data-centre range
+  (`84.17.50.144`, Datacamp Ltd / cdn77.com), a deliberately-invalid-credentials
+  probe returned `401` from `server: nginx/1.25.5` with a JSON body
+  `"Invalid client credentials"`. That is the ORIGIN application answering, so
+  the request completed the full journey.
+- Confirmed end to end: a real collection from the Android phone on that UK VPN
+  succeeded and pushed (commit c3b4897, 7,998 stations, payload verified
+  complete and grade-clean).
+
+What this means:
+- Hosting type is irrelevant. UK geolocation is the ONLY requirement.
+- Diagnostic tell: an empty-body 403 with `server: CloudFront` is a geo-block.
+  A JSON 401 from nginx means you got through and the credentials are the issue.
+- OPEN QUESTION, do not assume either way: "cloud collection is impossible"
+  rested on the false premise, so it should be RE-TESTED. Caveat: CloudFront may
+  treat known cloud ranges differently from CDN77, and GitHub's Azure runner IPs
+  are not guaranteed to geolocate to the UK. Needs an actual test, not an
+  assumption. If it passes, the residential-IP constraint that shapes this
+  project's whole architecture disappears.
+- Honesty flag, unresolved: check whether the API terms restrict access by
+  location. The project must be defensible in interviews, so we want to know
+  how the collection method reads before someone else asks.
+
 ## Decisions already made (do not reopen without flagging)
 - Model E10 (petrol) and B7_STANDARD (diesel) first. Other grades captured but parked.
 - Anchor the time series on `price_change_effective_timestamp`.
 - Canonical price unit: pence per litre.
 - Storage: raw gzipped JSON snapshots are the immutable "bronze" layer in `data/raw/`,
   partitioned by date. Tidy tables (Parquet, DuckDB) get built on top, not in place of.
-- Collection runs LOCALLY via Windows Task Scheduler. The API refuses data-centre
-  IPs, so cloud collection (GitHub Actions, etc.) is abandoned.
+- Collection runs LOCALLY (Windows Task Scheduler, or Termux cron on the Android
+  phone). Cloud collection was abandoned on the data-centre-IP premise, which is
+  now known to be false: see "API access is GEO-blocked" above. Treat cloud
+  collection as UNTESTED rather than impossible.
 - Known limitation: PC runs weekdays ~9 to 5, so collection misses nights, weekends,
-  and holidays. This is a deliberate, documented sampling gap.
+  and holidays. This is a deliberate, documented sampling gap. The phone is always
+  on and could close it (2-hourly, 7 days); if the cadence changes, record it in
+  the write-up so the sampling record stays honest.
 
 ## Guardrails
 - Credentials live ONLY in `.env` (local) and never in code. `.env` MUST stay
@@ -336,18 +378,60 @@ picture and phase order.
   its worst decile); (4) week-over-week Spearman stability of the
   leftover score (actual minus predicted), preliminary while history
   is thin, grows into a stability curve.
-- TO DISCUSS: user away for all of August 2026, Windows PC off, so
-  collection stops (API needs a residential IP, cloud collection is not an
-  option) and the manual weekly wholesale refresh stops too (app fair
-  prices go stale; build_gold warns at 21 days). Options to weigh nearer
-  the time: spare always-on machine on home network, Raspberry Pi,
-  relative's machine, or accept and document the gap. Keep-alive and CI
-  are cloud-side and unaffected.
+- RESOLVED (2026-08-02): the August collection gap. User is in Cyprus for
+  August 2026 with the Windows PC off. Collection now runs from the Android
+  phone in Termux, over a commercial VPN with a UK exit. Verified working end
+  to end: snapshot -> GitHub -> CI rebuild -> live app, with the CI rebuild
+  landing 70 seconds after the push. See `docs/termux_collection.md`.
+  - The wholesale refresh half of this problem was solved separately by
+    `.github/workflows/refresh-wholesale.yml` (Mondays 07:00 UTC), so it no
+    longer depends on any machine being on.
+  - STILL UNPROVEN as of 2026-08-02: only a MANUAL phone run has been
+    observed. Termux cron firing unattended, with the VPN up, has not been.
+    Failure mode to watch: cron fires, tunnel is down, request 403s, and the
+    log records a failure nobody reads. Android "Always-on VPN" plus "Block
+    connections without VPN" is what closes this. First thing to check on
+    pickup: did snapshots appear without anyone touching the phone.
+- OPEN (2026-08-02): gold rebuild is coupled to collection. `rebuild-app-data.yml`
+  triggers only on pushes touching `data/raw/`, so the weekly wholesale refresh
+  does NOT reprice the app on its own. If collection pauses (phone quiet, VPN
+  down), fair prices freeze on stale wholesale and the flag share drifts toward
+  100%, which looks like a finding but is an artefact. This actually happened:
+  between 2026-07-13 and 2026-08-02 the gold table sat on 2026-07-13 wholesale
+  while the market rose, showing 97.8% of diesel and 93.2% of petrol stations
+  flagged. The 2026-08-02 rebuild (fresh wholesale) took that to 37.7% and
+  41.8%, median overcharge 15.6p -> 1.6p diesel and 9.9p -> 1.3p petrol.
+  Proposed fix, NOT yet implemented, user to decide: also trigger
+  `rebuild-app-data.yml` on `data/external/wholesale_prices.parquet`, and add a
+  "prices as of DATE" staleness banner to the app (judging old standing prices
+  against current wholesale is the correct method, but it must be visible).
 - EDA review done 2026-07-03. Note: project started ~2026-06-24, so the
   plan's "week N" schedule does not map to calendar weeks; actual pace is
   much faster.
 - NOTE: overcharge_ppl > 0 alone cannot be the Signal 1 YES/NO threshold
   (95-97% of events are positive because current market margins exceed the 7p
   fair margin, per CMA). Threshold choice is an open modelling decision.
-- No modelling started yet.
+  Related, still open: with correct (fresh) wholesale, the 3p buffer still
+  flags 37.7% of diesel and 41.8% of petrol stations (2026-08-02). That is no
+  longer an artefact, but it is high for a signal meant to identify UNFAIR
+  pricing. Revisit the buffer and the constant basis alongside the Signal 2
+  review, not separately.
+
+## PICK UP HERE (as of 2026-08-02)
+Collection is running from the Android phone in Cyprus; the app is live and
+correct. Nothing is on fire. In priority order:
+1. Confirm Termux cron fired unattended overnight (see RESOLVED item above).
+   If it did not, that is the first thing to fix, everything else can wait.
+2. Review the Signal 2 E10 validation results (`signal2_validation.py`, run
+   2026-07-08). This is THE blocked path and has been for weeks: the results
+   are sitting there awaiting a user decision. Nothing downstream moves until
+   this is reviewed.
+3. Then, in order: B7_STANDARD run, feature-importance inspection, wire Signal 2
+   into gold and the app.
+4. Decide on the gold-rebuild trigger fix and the app staleness banner (see
+   OPEN item above). Small, but it is a real structural gap.
+5. Optional, cheap, high value if it pays off: re-test cloud collection now that
+   the data-centre-IP premise is known to be false. Would remove the project's
+   biggest architectural constraint.
+Still after all that: rocket-and-feathers module, then the write-up.
 
