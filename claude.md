@@ -180,6 +180,68 @@ What this means:
   pressure from others is legitimate). Motorway stations are excluded from
   Signal 2 training entirely and analysed as their own comparison group
   (also sidesteps the paired-services distance problem).
+- Signal 2 ACCEPTED (decided 2026-08-02, Decision 5): it passes the gate as an
+  explicitly CROSS-SECTIONAL RANKING model, not as an accurate fair-price
+  predictor. The write-up must claim ranking skill and nothing more. Evidence
+  (E10, 36,392 station-weeks, 7 dense weeks): Spearman 0.439 vs 0.324 for a
+  regional median, top-decile capture 24.8% vs 18.3% (random 10%). On the
+  accuracy gate it beats the regional median by only about 3%, so accuracy is
+  NOT the claim.
+- median_house_price DROPPED as a feature (decided 2026-08-02): it is
+  house_price_index * 290000 exactly (build_external.py), Spearman 1.000000,
+  so the two were one variable entered twice and LightGBM split the gain
+  arbitrarily between the copies. Dropping it left MAE and RMSE unchanged and
+  moved both rank metrics marginally the right way. house_price_index stays.
+  Lesson worth keeping: a gain table cannot be read feature-by-feature when
+  inputs are collinear.
+- House price KEPT but scored BOTH WAYS (decided 2026-08-02, Decision 6).
+  Signal 2 is trained twice per fuel, with and without house price
+  (FEATURES_NO_HP), and both out-of-fold predictions are saved so the app can
+  show which stations are excused only by sitting in an expensive area.
+  Rationale: house price is the largest static driver and carries most of
+  Signal 2's ranking edge (dropping it takes E10 Spearman 0.439 -> 0.354,
+  against 0.324 for a regional median), but it cannot separate genuine site
+  costs (rent, rates, land) from willingness-to-pay discrimination. Publishing
+  one number would hide that; publishing both makes it a finding.
+  EQUITY FINDING, quantified by affluence_sensitivity(): including house price
+  does not only forgive rich areas, it judges poor ones MORE harshly. E10:
+  Spearman(house_price_index, pence excused) 0.662; richest decile of MSOAs
+  +1.52p excused, poorest decile -1.28p (i.e. penalised); 130 of the 638
+  worst-decile stations are there ONLY because house price is in the model.
+  Diesel is materially the same (0.625, +1.70p / -1.22p, 127 of 640).
+- Signal 2 time-varying features ADDED (decided 2026-08-02, Decision 7):
+  national market regime only, wholesale_ppl and wholesale_chg_4w
+  (WEEK_NUMERIC in signal2_validation.py), built from the already-10-day-lagged
+  wholesale_ppl so there is no lookahead. REJECTED at the same time:
+  * lagged own overcharge: it is the target autocorrelated, would dominate
+    every other feature, and would normalise a station's own persistent
+    overcharging. Same objection as brand, in its purest form.
+  * lagged rival price pressure: defensible, but deferred.
+  * price staleness (weeks since last reprice): deferred until the
+    rocket-and-feathers module can say whether slow pass-through is a cost
+    story or an unfairness story. Adding it now risks excusing feathers.
+  What this bought: it fixed a structural defect. Before, EVERY feature was
+  static per station, so the model emitted one constant per station and 0 of
+  7,554 stations had more than one distinct prediction across 7 weeks. Now
+  7,386 of 7,554 vary by week, via interactions with station features.
+  ACCEPTED COST, documented: wholesale_chg_4w is the single largest E10 driver
+  (30.4% gain) and it teaches the model to EXPECT margins to widen when
+  wholesale rises, which is exactly the rocket behaviour the separate
+  rocket-and-feathers module exists to call out. Judged acceptable because a
+  national level term cannot change any within-week ranking (the deliverable)
+  and Signal 1, the primary flag, is untouched. Cross-reference this from the
+  rocket-and-feathers write-up.
+- Accuracy gate is now the WITHIN-WEEK DEMEANED MAE (decided 2026-08-02,
+  amends Decision 4): actual and predicted are demeaned within each week
+  before scoring, so the national level term cannot flatter the number. Raw
+  MAE fell 3.67 -> 2.82 when the regime features went in, but that was almost
+  entirely the model learning which week it was: Spearman moved only
+  0.423 -> 0.439. Demeaned, E10 is 2.82 vs 2.91 regional median vs 3.19
+  predict-zero. Raw MAE and RMSE are still reported alongside.
+- "temporal_check" RENAMED to "next_week_transfer_check" (2026-08-02). The old
+  name and docstring claimed it was the regime-shift test. It was not: with
+  all-static features the model could not respond to a regime shift at all.
+  It measures whether the learned mapping still ranks the following week.
 
 ## Wholesale price proxy (limitation, documented)
 - Source: NYMEX RBOB Gasoline (RB=F) for petrol, NYMEX Heating Oil (HO=F) for diesel,
@@ -333,6 +395,52 @@ What this means:
   the unseen-station test, caveat in docstring). Leftover score stability
   rho 0.85-0.93 week over week. Next: user review of results, then B7
   run, feature importance inspection, wire Signal 2 into gold/app.
+  SUPERSEDED 2026-08-02 by the review below. Note the "regime-shift test"
+  claim in this entry was wrong; see the rename decision above.
+- DONE (2026-08-02): Signal 2 REVIEWED and accepted. This unblocks the path
+  that had been stalled since 2026-07-08. Rebuilt silver/features first, which
+  took the modelling table from 4 dense weeks to 7 (E10: 14,732 -> 36,392
+  station-weeks, 7,554 stations, 417 cells). See Decisions 5 to 7 above for
+  what was decided and why. Both fuels now run; all numbers below are spatial
+  5-fold GroupKFold out-of-fold, MAE/wk = the within-week demeaned accuracy
+  gate.
+    E10           MAE 2.82  MAE/wk 2.82  RMSE 3.75  Spearman 0.439  top-dec 24.8%
+      affl-blind  MAE 2.94  MAE/wk 2.94  RMSE 3.86  Spearman 0.354  top-dec 23.7%
+      zero        MAE 3.98  MAE/wk 3.19  RMSE 5.09
+      regional    MAE 3.72  MAE/wk 2.91  RMSE 4.77  Spearman 0.324  top-dec 18.3%
+    B7_STANDARD   MAE 3.64  MAE/wk 3.64  RMSE 4.74  Spearman 0.386  top-dec 24.3%
+      affl-blind  MAE 3.71  MAE/wk 3.72  RMSE 4.83  Spearman 0.330  top-dec 23.1%
+      zero        MAE 6.11  MAE/wk 4.03  RMSE 7.58
+      regional    MAE 4.65  MAE/wk 3.75  RMSE 5.92  Spearman 0.267  top-dec 12.6%
+  Diesel ranks slightly worse than petrol but beats its baselines by MORE,
+  which is consistent with the HO=F proxy basis error inflating the level
+  without destroying the cross-section. Leftover stability rho 0.79-0.92 (E10)
+  and 0.69-0.86 (B7); diesel is the noisier of the two.
+  Feature importance (gain, full-data fit, DIAGNOSTIC ONLY): E10
+  wholesale_chg_4w 30.4%, house_price_index 18.6%, dist_nearest_rival 10.8%,
+  dist_nearest_supermarket 9.9%, ruc21desc 6.5%, rival_count_5km 5.7%.
+  B7 is flatter: wholesale_chg_4w 18.7%, house_price_index 18.7%,
+  wholesale_ppl 17.8%, dist_nearest_supermarket 11.2%.
+- OPEN and IMPORTANT (2026-08-02): the next-week transfer check is NOT
+  trustworthy yet, and diesel proves it. With 7 dense weeks the two national
+  regime features have taken only 7 values, and in BOTH fuels the held-out
+  week fell OUTSIDE the training range of both features. LightGBM cannot
+  extrapolate, so it clamps to the most extreme training week.
+  * E10 looked good (MAE 2.98 vs 5.34 zero vs 5.12 regional, Spearman 0.583)
+    but only because the market kept moving the same direction, so clamping
+    happened to be right. That is luck, not skill.
+  * B7_STANDARD FAILED: MAE 6.10 model vs 4.60 regional median. The model
+    lost to a baseline. Diesel wholesale spiked 67.57 -> 74.35p in one week
+    (chg_4w -2.92 -> +8.42, far outside the training range of -12.56 to
+    -2.92), pump prices lagged, so margins COMPRESSED to 6.37p while the
+    model confidently predicted the ~8.4p high-margin regime it had been
+    trained on.
+  Do not quote next-week transfer numbers in the write-up without this
+  caveat. Candidate fix, NOT yet implemented, user to decide: predict the
+  WITHIN-WEEK DEMEANED target instead of the raw target, which removes the
+  level from the model's job entirely and so removes the extrapolation
+  failure mode, at the cost of no longer producing a fair-price level from
+  Signal 2. Revisit once more market regimes have been observed.
 - DONE (2026-07-13): fixed silent snapshot-push failure. run_collection.ps1
   pushed without pulling and ignored the push exit code, so after the CI bot
   pushed a gold rebuild to main on 2026-07-08 every scheduled push from
@@ -417,21 +525,30 @@ What this means:
   pricing. Revisit the buffer and the constant basis alongside the Signal 2
   review, not separately.
 
-## PICK UP HERE (as of 2026-08-02)
+## PICK UP HERE (as of 2026-08-02, evening)
 Collection is running from the Android phone in Cyprus; the app is live and
-correct. Nothing is on fire. In priority order:
-1. Confirm Termux cron fired unattended overnight (see RESOLVED item above).
-   If it did not, that is the first thing to fix, everything else can wait.
-2. Review the Signal 2 E10 validation results (`signal2_validation.py`, run
-   2026-07-08). This is THE blocked path and has been for weeks: the results
-   are sitting there awaiting a user decision. Nothing downstream moves until
-   this is reviewed.
-3. Then, in order: B7_STANDARD run, feature-importance inspection, wire Signal 2
-   into gold and the app.
+correct. Nothing is on fire. The Signal 2 review that had blocked everything
+since 2026-07-08 is DONE: reviewed, accepted, both fuels run, decisions 5 to 7
+recorded above. In priority order:
+1. Confirm Termux cron fires unattended. NOT yet observed: the crontab is the
+   Mon-Fri 4x/day one, and 2026-08-02 was a Sunday, so the only run so far was
+   the manual one. First real proof is Monday 2026-08-03 around 09:00 EEST.
+   Check whether a snapshot appears with nobody touching the phone. If it does
+   not, that is the first thing to fix and everything else can wait.
+2. Wire Signal 2 into gold and the app. Both fuels have out-of-fold
+   predictions in data/features/signal2_cv_{fuel}.parquet, including the
+   affluence-blind twin (pred_model_nohp) that the app is meant to surface
+   alongside the main ranking (Decision 6).
+3. Decide the next-week-transfer extrapolation fix (see the OPEN item above,
+   the one where diesel lost to a regional median). Probably wait for more
+   market regimes rather than change the target now.
 4. Decide on the gold-rebuild trigger fix and the app staleness banner (see
-   OPEN item above). Small, but it is a real structural gap.
+   the other OPEN item above). Small, but it is a real structural gap.
 5. Optional, cheap, high value if it pays off: re-test cloud collection now that
    the data-centre-IP premise is known to be false. Would remove the project's
    biggest architectural constraint.
-Still after all that: rocket-and-feathers module, then the write-up.
+Still after all that: rocket-and-feathers module, then the write-up. Note the
+rocket-and-feathers module now has a specific job it did not have before:
+Decision 7 knowingly let Signal 2 treat widening margins on rising wholesale as
+expected, and that needs cross-referencing when the asymmetry is measured.
 

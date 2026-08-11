@@ -10,8 +10,11 @@ Implements the Signal 2 decisions recorded in claude.md on 2026-07-06/08:
                         reasoned from the 5km rival radius: only stations near
                         a cell border can leak competition information across
                         folds (minor, documented).
-  Temporal validation   train on all-but-last dense week, test on the last.
+  Next-week transfer    train on all-but-last dense week, test on the last.
                         Thin while history is short; grows with collection.
+                        NOT a regime-shift test: all features are static per
+                        station, so the model cannot respond to a regime
+                        change. See next_week_transfer_check for detail.
   Exclusions            motorway stations (own comparison group; haversine
                         distances overstate their competition), ferry-dependent
                         islands (own comparison group; genuine delivery costs
@@ -21,6 +24,10 @@ Implements the Signal 2 decisions recorded in claude.md on 2026-07-06/08:
                         within-fold regional-median baselines. Top-decile
                         capture. Week-over-week stability of the leftover
                         score (actual minus out-of-fold prediction).
+                        The accuracy gate is the WITHIN-WEEK DEMEANED MAE
+                        (added 2026-08-02): raw MAE credits the model for
+                        knowing which week it is, which cannot help a
+                        within-week ranking. See demeaned_mae().
 
 Feature exclusions (decided 2026-07-03): brand, is_motorway, is_supermarket
 are NOT features (own-type attributes would normalise group-wide premiums).
@@ -80,13 +87,38 @@ ISLAND_DISTRICTS = {
 # Outer Hebrides: the whole HS postcode area is islands.
 ISLAND_AREAS = {"HS"}
 
-NUMERIC_FEATURES = [
+# Static per-station features. median_house_price was DROPPED 2026-08-02: it is
+# house_price_index * 290000 exactly (see build_external.py), so the two were
+# perfectly collinear and LightGBM split their importance arbitrarily between
+# two copies of one variable. Dropping it changed MAE/RMSE not at all and moved
+# both rank metrics marginally the right way.
+STATIC_NUMERIC = [
     "rival_count_1km", "rival_count_3km", "rival_count_5km",
     "dist_nearest_rival_km", "dist_nearest_supermarket_km",
-    "n_rival_brands_5km", "median_house_price", "house_price_index",
+    "n_rival_brands_5km", "house_price_index",
 ]
+# Time-varying national market-regime features (added 2026-08-02). Identical
+# for every station in a week, so they add no cross-sectional ranking skill on
+# their own; what they buy is the ability to respond to a change in market
+# regime, either by shifting the whole prediction level or through
+# interactions with station features (e.g. rural stations lagging further
+# behind in a falling-wholesale week). Both are built from wholesale_ppl,
+# which build_features.py has ALREADY lagged 10 days, so there is no
+# lookahead; the 4-week change looks further back still.
+WEEK_NUMERIC = ["wholesale_ppl", "wholesale_chg_4w"]
 CATEGORICAL_FEATURES = ["ruc21desc", "ruc_2fold"]
+NUMERIC_FEATURES = STATIC_NUMERIC + WEEK_NUMERIC
 FEATURES = NUMERIC_FEATURES + CATEGORICAL_FEATURES
+
+# Parallel "affluence-blind" feature set (added 2026-08-02). Signal 2 is
+# scored twice, with and without house price, so the app can surface stations
+# that are only excused by sitting in an expensive MSOA. Keeping house price
+# risks normalising willingness-to-pay discrimination (the same objection that
+# excluded brand on 2026-07-03); dropping it costs most of Signal 2's ranking
+# edge over the regional-median baseline. Publishing both refuses to hide the
+# trade-off behind a single number.
+HOUSE_PRICE_FEATURES = ["house_price_index"]
+FEATURES_NO_HP = [f for f in FEATURES if f not in HOUSE_PRICE_FEATURES]
 
 LGBM_PARAMS = {
     "objective": "regression_l1",   # MAE objective, robust to heavy tails
@@ -112,6 +144,35 @@ def outward_district(postcode: pd.Series) -> pd.Series:
     return key.str[:-3]
 
 
+def weekly_market_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    National market-regime features, one row per week: the (already 10-day
+    lagged) wholesale level and its change over the preceding 4 weeks.
+
+    Built from ALL events, including weeks later dropped as sparse, because
+    wholesale_ppl depends only on the event date, not on which stations
+    happened to reprice. That keeps the 4-week difference well defined at the
+    start of the dense period instead of returning NaN for the first 4 weeks.
+
+    Weeks with no events at all are linearly interpolated so the difference is
+    a true 4 calendar weeks rather than 4 observed weeks. Gaps are rare and
+    this is a national series, so the smoothing is negligible.
+    """
+    wk = df.groupby("week", as_index=False)["wholesale_ppl"].mean()
+    wk = wk.sort_values("week")
+    full = pd.date_range(wk["week"].min(), wk["week"].max(), freq="W-MON")
+    s = (
+        wk.set_index("week")["wholesale_ppl"]
+        .reindex(full)
+        .interpolate(limit_direction="both")
+    )
+    return pd.DataFrame({
+        "week": full,
+        "wholesale_ppl": s.to_numpy(),
+        "wholesale_chg_4w": (s - s.shift(4)).to_numpy(),
+    })
+
+
 def load_station_weeks(fuel: str) -> pd.DataFrame:
     """
     Build the station-week modelling table for one fuel: mean overcharge_ppl
@@ -122,7 +183,7 @@ def load_station_weeks(fuel: str) -> pd.DataFrame:
         "node_id", "fuel_type", "price_change_effective_timestamp",
         "overcharge_ppl", "latitude", "longitude", "postcode",
         "is_motorway", "permanent_closure", "region",
-    ] + FEATURES
+    ] + STATIC_NUMERIC + CATEGORICAL_FEATURES + ["wholesale_ppl"]
     df = pd.read_parquet(FEATURES_IN, columns=cols)
     df = df[df["fuel_type"] == fuel].copy()
     print(f"  {len(df):,} {fuel} events, {df['node_id'].nunique():,} stations")
@@ -155,13 +216,19 @@ def load_station_weeks(fuel: str) -> pd.DataFrame:
         overcharge_ppl=("overcharge_ppl", "mean"),
         n_events=("overcharge_ppl", "size"),
     )
-    # Static per-station attributes (latest observation).
-    station_cols = ["node_id", "latitude", "longitude", "region"] + FEATURES
+    # Static per-station attributes (latest observation). Deliberately excludes
+    # WEEK_NUMERIC: those vary by week, so carrying them per station would
+    # freeze every station at its last observed week.
+    station_cols = (
+        ["node_id", "latitude", "longitude", "region"]
+        + STATIC_NUMERIC + CATEGORICAL_FEATURES
+    )
     stations = (
         df.sort_values("price_change_effective_timestamp")
         .drop_duplicates("node_id", keep="last")[station_cols]
     )
     out = grouped.merge(stations, on="node_id", how="left")
+    out = out.merge(weekly_market_features(df), on="week", how="left")
 
     counts = out.groupby("week")["node_id"].size()
     print("  Stations per week:")
@@ -242,6 +309,7 @@ def spatial_cv(df: pd.DataFrame) -> pd.DataFrame:
     """
     df = df.copy()
     df["pred_model"] = np.nan
+    df["pred_model_nohp"] = np.nan
     df["pred_regional"] = np.nan
 
     gkf = GroupKFold(n_splits=N_FOLDS)
@@ -261,8 +329,17 @@ def spatial_cv(df: pd.DataFrame) -> pd.DataFrame:
             categorical_feature=CATEGORICAL_FEATURES,
         )
         pred = model.predict(test[FEATURES])
+        # Affluence-blind twin, trained on the same fold so the two rankings
+        # are directly comparable station by station.
+        model_nohp = lgb.LGBMRegressor(**LGBM_PARAMS)
+        model_nohp.fit(
+            train[FEATURES_NO_HP], train["overcharge_ppl"],
+            categorical_feature=CATEGORICAL_FEATURES,
+        )
+        pred_nohp = model_nohp.predict(test[FEATURES_NO_HP])
         pred_reg = regional_median_baseline(train, test)
         df.iloc[te_idx, df.columns.get_loc("pred_model")] = pred
+        df.iloc[te_idx, df.columns.get_loc("pred_model_nohp")] = pred_nohp
         df.iloc[te_idx, df.columns.get_loc("pred_regional")] = pred_reg
 
         y = test["overcharge_ppl"].to_numpy()
@@ -276,42 +353,81 @@ def spatial_cv(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def demeaned_mae(df: pd.DataFrame, pred: np.ndarray) -> float:
+    """
+    MAE after removing the national level term, i.e. after subtracting the
+    within-week mean from both actual and predicted (added 2026-08-02).
+
+    This is the honest accuracy gate. Raw MAE credits the model for knowing
+    which week it is: the national market-regime features (WEEK_NUMERIC) let
+    it track a mean overcharge that swings several pence week to week, which
+    cut raw MAE sharply without improving the deliverable. Signal 2's job is
+    ranking stations WITHIN a week, and any level term is invariant to that,
+    so demeaning strips out the part that cannot help the deliverable.
+    """
+    y = df["overcharge_ppl"].to_numpy()
+    week = df["week"].to_numpy()
+    frame = pd.DataFrame({"week": week, "y": y, "p": pred})
+    y_dm = frame["y"] - frame.groupby("week")["y"].transform("mean")
+    p_dm = frame["p"] - frame.groupby("week")["p"].transform("mean")
+    return float((y_dm - p_dm).abs().mean())
+
+
 def report_pooled(df: pd.DataFrame) -> None:
     y = df["overcharge_ppl"].to_numpy()
     rows = [
         ("LightGBM (Signal 2)", df["pred_model"].to_numpy(), "pred_model"),
+        ("LightGBM, affluence-blind", df["pred_model_nohp"].to_numpy(),
+         "pred_model_nohp"),
         ("predict-zero (Signal 1 alone)", np.zeros(len(df)), None),
         ("regional median", df["pred_regional"].to_numpy(), "pred_regional"),
     ]
     print("\nPooled out-of-fold results (all held-out station-weeks):")
     print(
-        f"  {'':32s} {'MAE':>7s} {'RMSE':>7s} "
+        f"  {'':32s} {'MAE':>7s} {'MAE/wk':>7s} {'RMSE':>7s} "
         f"{'Spearman/wk':>12s} {'top-decile':>11s}"
     )
     for name, pred, col in rows:
         mae, rmse = point_metrics(y, pred)
+        mae_dm = demeaned_mae(df, pred)
         if col is not None:
             rho, cap = rank_metrics(df, col)
             rank_txt = f"{rho:12.3f} {cap:11.1%}"
         else:
             rank_txt = f"{'n/a':>12s} {'n/a':>11s}"  # zero has no ranking
-        print(f"  {name:32s} {mae:7.2f} {rmse:7.2f} {rank_txt}")
+        print(
+            f"  {name:32s} {mae:7.2f} {mae_dm:7.2f} {rmse:7.2f} {rank_txt}"
+        )
+    print(
+        "  MAE/wk = within-week demeaned MAE, the accuracy gate: strips the\n"
+        "  national level term so the number reflects cross-sectional skill only."
+    )
 
 
-def temporal_check(df: pd.DataFrame) -> None:
+def next_week_transfer_check(df: pd.DataFrame) -> None:
     """
     Train on all dense weeks except the last, predict the last. Documented as
     thin while only a few dense weeks exist; strengthens with history.
 
-    Honest caveat: train and test weeks share stations (unavoidable in a
-    same-panel forward check), so this measures whether last week's learned
-    mapping still ranks THIS week, not generalisation to unseen stations.
-    The spatial CV is the unseen-station test; this is the regime-shift test.
-    Expect these numbers to look better than the spatial CV for that reason.
+    Named "next-week transfer", NOT "temporal validation", for two reasons
+    (renamed 2026-08-02):
+
+    1. Train and test weeks share stations (unavoidable in a same-panel
+       forward check), so this measures whether the learned mapping still
+       ranks the following week, not generalisation to unseen stations.
+       The spatial CV is the unseen-station test. Expect these numbers to
+       look better than the spatial CV for that reason.
+    2. It is NOT a regime-shift test, which is what an earlier version of
+       this docstring claimed. Every Signal 2 feature is static per station
+       (competition, house price, RUC), so the model emits one constant per
+       station and literally cannot respond to a change in market regime.
+       Verified 2026-08-02: 0 of 7,554 stations received more than one
+       distinct prediction across 7 weeks. A real regime-shift test needs
+       time-varying features first.
     """
     weeks = sorted(df["week"].unique())
     if len(weeks) < 2:
-        print("\nTemporal check: skipped, fewer than 2 dense weeks.")
+        print("\nNext-week transfer check: skipped, fewer than 2 dense weeks.")
         return
     last = weeks[-1]
     train = df[df["week"] < last]
@@ -321,19 +437,93 @@ def temporal_check(df: pd.DataFrame) -> None:
         train[FEATURES], train["overcharge_ppl"],
         categorical_feature=CATEGORICAL_FEATURES,
     )
-    test["pred_temporal"] = model.predict(test[FEATURES])
+    test["pred_next_week"] = model.predict(test[FEATURES])
     y = test["overcharge_ppl"].to_numpy()
-    mae_m, _ = point_metrics(y, test["pred_temporal"].to_numpy())
+    mae_m, _ = point_metrics(y, test["pred_next_week"].to_numpy())
     mae_z, _ = point_metrics(y, np.zeros(len(y)))
     mae_r, _ = point_metrics(y, regional_median_baseline(train, test))
-    rho, cap = rank_metrics(test, "pred_temporal")
+    rho, cap = rank_metrics(test, "pred_next_week")
     print(
-        f"\nTemporal check (train {len(weeks) - 1} week(s) -> "
+        f"\nNext-week transfer check (train {len(weeks) - 1} week(s) -> "
         f"test w/c {pd.Timestamp(last).date()}, {len(test):,} stations):"
     )
     print(
         f"  MAE model {mae_m:.2f} | zero {mae_z:.2f} | regional {mae_r:.2f}"
         f" | Spearman {rho:.3f} | top-decile capture {cap:.1%}"
+    )
+
+
+def report_feature_importance(df: pd.DataFrame) -> None:
+    """
+    Gain-based importance from a single full-data fit. Diagnostic only: it is
+    fitted in-sample, so read it as "what does the model lean on", never as
+    evidence of out-of-sample skill.
+
+    Caveat worth remembering: gain is split arbitrarily between collinear
+    features. That is exactly what hid the house-price duplication until
+    2026-08-02, when median_house_price and house_price_index turned out to be
+    the same variable (Spearman 1.000000) sharing one variable's importance.
+    """
+    model = lgb.LGBMRegressor(**LGBM_PARAMS)
+    model.fit(
+        df[FEATURES], df["overcharge_ppl"],
+        categorical_feature=CATEGORICAL_FEATURES,
+    )
+    gain = pd.Series(model.booster_.feature_importance("gain"), index=FEATURES)
+    gain = 100 * gain / gain.sum()
+    print("\nFeature importance (full-data fit, gain %, diagnostic only):")
+    for name, pct in gain.sort_values(ascending=False).items():
+        kind = "week " if name in WEEK_NUMERIC else "static"
+        print(f"  {name:30s} {kind}  {pct:5.1f}%")
+
+
+def affluence_sensitivity(df: pd.DataFrame) -> None:
+    """
+    Where do the two Signal 2 rankings disagree, and does affluence explain it?
+
+    The leftover score (actual minus prediction) is the deliverable. Comparing
+    it with and without house price shows which stations the affluence feature
+    excuses. A station whose leftover DROPS when house price is included is one
+    the model forgives for sitting in an expensive area; that is precisely the
+    willingness-to-pay normalisation we refuse to hide.
+    """
+    df = df.copy()
+    df["leftover"] = df["overcharge_ppl"] - df["pred_model"]
+    df["leftover_nohp"] = df["overcharge_ppl"] - df["pred_model_nohp"]
+    df["excused_ppl"] = df["leftover_nohp"] - df["leftover"]
+
+    station = df.groupby("node_id").agg(
+        excused_ppl=("excused_ppl", "mean"),
+        house_price_index=("house_price_index", "first"),
+    ).dropna(subset=["house_price_index"])
+
+    rho = spearmanr(station["house_price_index"],
+                    station["excused_ppl"]).statistic
+    print("\nAffluence sensitivity (how much house price excuses):")
+    print(
+        f"  Spearman(house_price_index, ppl excused by the feature): {rho:.3f}"
+    )
+    q = station["house_price_index"].quantile([0.1, 0.9])
+    lo = station[station["house_price_index"] <= q.iloc[0]]["excused_ppl"]
+    hi = station[station["house_price_index"] >= q.iloc[1]]["excused_ppl"]
+    print(
+        f"  Poorest decile of MSOAs: {lo.mean():+.2f} ppl excused "
+        f"(n={len(lo):,})"
+    )
+    print(
+        f"  Richest decile of MSOAs: {hi.mean():+.2f} ppl excused "
+        f"(n={len(hi):,})"
+    )
+    # Rank churn: how many stations move in or out of the worst decile.
+    n_top = max(1, len(station) // 10)
+    s_full = df.groupby("node_id")["leftover"].mean()
+    s_nohp = df.groupby("node_id")["leftover_nohp"].mean()
+    top_full = set(s_full.nlargest(n_top).index)
+    top_nohp = set(s_nohp.nlargest(n_top).index)
+    print(
+        f"  Worst-decile membership: {len(top_full & top_nohp):,} of {n_top:,} "
+        f"stations shared ({len(top_full - top_nohp):,} appear only when "
+        f"house price is INCLUDED)"
     )
 
 
@@ -377,7 +567,9 @@ def main() -> None:
 
     df = spatial_cv(df)
     report_pooled(df)
-    temporal_check(df)
+    next_week_transfer_check(df)
+    report_feature_importance(df)
+    affluence_sensitivity(df)
     stability_check(df)
 
     out_path = Path(OOF_OUT_TEMPLATE.format(fuel=args.fuel.lower()))
