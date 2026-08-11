@@ -36,12 +36,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v9
         with:
           enable-cache: true
+          # v9 flipped this default to false. Kept true so the repo's shared
+          # Actions cache does not fill with old uv downloads.
+          prune-cache: true
 
       - name: Install dependencies
         run: uv sync --frozen
