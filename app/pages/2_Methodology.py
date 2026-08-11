@@ -51,14 +51,67 @@ price. The flag threshold is set so it highlights the worst offenders rather
 than declaring the entire market unfair, but the market-wide gap is itself a
 finding, consistent with the CMA's own conclusions.
 
-## What is coming next (Signal 2)
+## The peer comparison (Signal 2)
 
-A second, peer-relative signal: a model of how much of each station's
-overcharge is explained by local market structure (competition density,
-rurality, local costs). It will rank flagged stations and separate
-"expensive because remote" from "expensive because it can be". Deliberately
-excluded from that model: brand, motorway status, and supermarket status,
-because controlling for them would excuse group-wide overcharging.
+Signal 1 asks whether a price is justified by costs. Signal 2 asks a second
+question: **is this station dear compared with stations facing similar
+circumstances?** A gradient-boosted model (LightGBM) learns how much margin is
+normal given competition density, distance to the nearest rival and nearest
+supermarket, how rural the area is, and local house prices. The station's
+**Vs peers** figure is the gap between what it charges and what the model
+expects of a comparable station.
+
+**It is a ranking, not an absolute figure.** Two design choices follow from
+that, and both matter when reading the numbers:
+
+- The figure is measured against the *typical* station in the current market,
+  so it centres on zero: half of stations sit above, half below. A station at
+  +4p is dearer than comparable stations, it is not overcharging by 4p in
+  absolute terms. Signal 1 is the absolute number.
+- The model is validated on its ability to rank, not to predict a price. Held
+  out from training by geography, it ranks stations at Spearman 0.44 (petrol)
+  and 0.39 (diesel) against 0.32 and 0.27 for a simple regional-median
+  benchmark, and it puts about a quarter of the genuinely worst-priced tenth
+  of stations into its own worst tenth, against 10% for chance. On raw
+  accuracy it beats the regional benchmark by only about 3%, which is why
+  accuracy is not the claim being made.
+
+**Deliberately excluded from the model**: brand, motorway status, and
+supermarket status. Controlling for them would teach the model that a
+brand-wide or motorway-wide premium is normal, which would excuse exactly the
+group-wide overcharging the project exists to detect. Distance to the nearest
+supermarket stays, because competitive pressure from *others* is legitimate.
+
+**Deliberately not compared**: motorway services and stations on
+ferry-dependent islands. Both face real cost and competition structures that
+peer comparison would misrepresent, so they are labelled rather than scored,
+and analysed as their own groups.
+
+### House prices, and why two numbers are published
+
+Local house prices are the single largest driver in the model, and they are
+genuinely ambiguous. They stand in for real site costs (rent, rates, land),
+but they also let a model forgive a high price simply for being in a wealthy
+area, and judge a poorer one more harshly for the same behaviour.
+
+Rather than pick one answer and hide the choice, the model is scored twice,
+with and without house prices, and the difference is published as **Excused by
+area**. The pattern in that column is itself a finding: including house prices
+does not only forgive rich areas, it penalises poor ones. Across England and
+Wales, the wealthiest tenth of areas are excused about 1.5p per litre, while
+the poorest tenth are judged roughly 1.2p more harshly, and around a fifth of
+the stations in the worst-ranked tenth are there only because house prices are
+in the model.
+
+### Known weakness
+
+The model has only observed a few months of market conditions. When wholesale
+prices move outside the range it has seen, it cannot extrapolate and its
+estimate of the overall level becomes unreliable, which is why the comparison
+is reported relative to the current market rather than as an absolute figure.
+The relative ranking is unaffected, because that error applies equally to
+every station. This is a limitation of a young dataset, and it shrinks as
+collection continues.
 
 ## Data sources
 
@@ -87,17 +140,24 @@ because controlling for them would excuse group-wide overcharging.
   Stations that rarely report show older prices; the map tooltip shows when
   each price was last changed.
 - **Northern Ireland**: local-context data (house prices, rural-urban class)
-  covers Great Britain only, so NI stations will be excluded from Signal 2
-  local-market adjustments. Their prices and fair prices are computed the
-  same as everywhere else.
-- **Motorway services**: flagged at very high rates and shown on the map,
-  but they will be analysed as their own comparison group in Signal 2. Their
-  distance-based competition measures are misleading (paired services sit on
-  opposite carriageways), and their cost structure differs.
+  covers Great Britain only. NI stations are still peer-compared, but with
+  that context missing, so their comparison is weaker. Their prices and fair
+  prices are computed the same as everywhere else.
+- **Motorway services**: flagged at very high rates and shown on the map, but
+  not peer-compared. Their distance-based competition measures are misleading
+  (paired services sit on opposite carriageways) and their cost structure
+  differs, so they are analysed as their own comparison group.
+- **Young peer model**: Signal 2 is trained on the weeks collected so far, a
+  short and unusually volatile stretch of the market. It ranks stations
+  reliably; its sense of the overall price level is still thin, as described
+  above.
 
 ## Fairness of the presentation
 
-The map colours stations by their gap to fair price, not by raw price, so a
-cheap rural market and an expensive urban one are judged on the same footing.
-Blue means below fair, gray means at fair, red means above.
+The map colours stations by their gap to fair price, or by their gap to
+comparable stations, never by raw price, so a cheap rural market and an
+expensive urban one are judged on the same footing. Blue means below, gray
+means level, red means above. Stations that are deliberately not peer-compared
+are drawn in flat gray when that view is selected, so they read as "not
+assessed" rather than "assessed and average".
 """)

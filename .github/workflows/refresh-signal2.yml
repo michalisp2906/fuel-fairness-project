@@ -1,0 +1,71 @@
+# Weekly refresh of the Signal 2 peer comparison (data/gold/signal2_scores.parquet).
+#
+# Signal 2 is deliberately NOT retrained on every snapshot push. The model is
+# fitted on station-WEEKS, so four snapshots a day move it barely at all, while
+# each run costs ten LightGBM fits (five folds, twice, per fuel). Retraining
+# weekly and repricing continuously is the right split: build_signal2.py writes
+# predictions only, and build_gold.py turns them into the displayed peer figure
+# against whatever the standing prices are at rebuild time.
+#
+# Runs after "Refresh wholesale prices" (Mondays 07:00 UTC) so the scores are
+# built for the same wholesale week the app is repriced against. build_gold.py
+# warns if those two ever drift apart.
+#
+# This job rebuilds and commits the gold table itself rather than leaving it to
+# the next snapshot push, because "Rebuild app data" only fires on data/raw/**
+# and would not otherwise notice the new scores. It shares that workflow's
+# concurrency group so the two can never commit data/gold/ at the same time.
+
+name: Refresh Signal 2
+
+on:
+  schedule:
+    # Mondays 08:00 UTC, an hour after the wholesale refresh.
+    - cron: "0 8 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: rebuild-app-data
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Rebuild silver and features
+        run: |
+          uv run python build_silver.py
+          uv run python build_features.py
+
+      - name: Refit Signal 2 and rebuild gold
+        run: |
+          uv run python build_signal2.py
+          uv run python build_gold.py
+
+      - name: Commit refreshed scores and app data
+        run: |
+          if git diff --quiet -- data/gold/; then
+            echo "Signal 2 scores and gold table unchanged; nothing to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/gold/signal2_scores.parquet data/gold/app_data.parquet
+          git commit -m "ci: refresh Signal 2 peer comparisons"
+          # A snapshot push may have landed while we were building.
+          git pull --rebase origin main
+          git push

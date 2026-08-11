@@ -242,6 +242,45 @@ What this means:
   name and docstring claimed it was the regime-shift test. It was not: with
   all-static features the model could not respond to a regime shift at all.
   It measures whether the learned mapping still ranks the following week.
+- Signal 2 app scoring is CROSS-FITTED, not a production refit (decided
+  2026-08-11, Decision 8). build_signal2.py refits the same five
+  GroupKFold-by-cell models the validation harness scores, then predicts each
+  station with the fold model that HELD ITS CELL OUT, using today's national
+  regime values. Every station gets a score, no station is scored by a model
+  that trained on it, and the app number is the same quantity the published CV
+  metrics describe. REJECTED: (a) reusing the stored out-of-fold predictions,
+  which belong to past weeks and are week-specific now that regime features are
+  in; (b) one model trained on everything, which partly memorises each
+  station's own overcharging across its ~8 station-weeks and would report a
+  small gap for exactly the stations the project exists to catch (the brand
+  objection arriving through the back door).
+- The app shows a DEMEANED peer figure (decided 2026-08-11, Decision 9).
+  signal2_ppl = leftover (actual minus predicted) minus the median leftover
+  across scored stations of that fuel, i.e. "pence dearer than the typical
+  comparable station today". Forced by measurement, not taste: on 2026-08-11
+  the raw leftover median was -2.0p (E10) and -3.1p (B7), because the fold
+  models were trained on a wide-margin regime and clamp when wholesale moves
+  outside it, so the app would have told visitors that nearly every station in
+  the country undercharges. The error is a single level shared by all stations,
+  so demeaning removes it and leaves the ranking untouched. Consistent with the
+  demeaned accuracy gate from Decision 4 as amended, so the app and the
+  validation harness now describe the same quantity. ACCEPTED COST, stated on
+  the Methodology page: Signal 2 answers "dearer than comparable stations", not
+  "dearer by N pence". Signal 1 remains the absolute number.
+- Excluded stations are LABELLED, never blank (decided 2026-08-11). Motorway
+  and ferry-island rows carry signal2_status ("not compared: motorway, own
+  group" etc.) and render in flat gray on the peer map view. They are 465 of
+  the 623 unscored gold rows and the ones visitors click first, so a silent
+  blank would read as "assessed and average".
+- Signal 2 refreshes WEEKLY, gold reprices continuously (decided 2026-08-11,
+  Decision 10). build_signal2.py writes PREDICTIONS ONLY to
+  data/gold/signal2_scores.parquet (committed, because CI's build_gold.py reads
+  it and data/features/ is gitignored); build_gold.py computes the leftover
+  against the standing price at every rebuild. Retraining on all ~10 snapshot
+  pushes a day would cost ten LightGBM fits each time to move a station-week
+  model barely at all. .github/workflows/refresh-signal2.yml runs Mondays 08:00
+  UTC, an hour after the wholesale refresh, so scores and prices share a
+  wholesale week; build_gold.py warns if they ever drift apart.
 
 ## Wholesale price proxy (limitation, documented)
 - Source: NYMEX RBOB Gasoline (RB=F) for petrol, NYMEX Heating Oil (HO=F) for diesel,
@@ -513,6 +552,41 @@ What this means:
   `rebuild-app-data.yml` on `data/external/wholesale_prices.parquet`, and add a
   "prices as of DATE" staleness banner to the app (judging old standing prices
   against current wholesale is the correct method, but it must be visible).
+- DONE (2026-08-11): Signal 2 wired into gold and the app. See Decisions 8 to
+  10 above for the method and why. New `build_signal2.py` (cross-fitted
+  current-week scoring) writes data/gold/signal2_scores.parquet; build_gold.py
+  merges it into four app columns (signal2_ppl, excused_by_affluence_ppl,
+  signal2_decile, signal2_status) and computes the demeaned peer figure;
+  .github/workflows/refresh-signal2.yml refreshes it weekly. The
+  affluence-blind figure is NOT stored, it is signal2_ppl +
+  excused_by_affluence_ppl, derived in app_utils to keep the committed table
+  small (834 KB, was 792 KB).
+  App changes: map page gained a "Colour by" radio (vs fair price, or vs
+  comparable stations, narrower +/-6p scale) and a fifth KPI tile; station
+  lookup gained Vs peers, Peer decile, and Excused by area columns; the
+  Methodology page's "coming next" section became a full Signal 2 write-up
+  including the equity finding and the extrapolation weakness. All three pages
+  verified headless with streamlit AppTest, including the peer colour mode.
+  NOTE for testing: AppTest does not put app/ on sys.path the way
+  `streamlit run` does, so a test harness must insert it before importing.
+  Coverage: 15,214 of 15,837 gold rows scored (96.1%). Unscored: 327 motorway,
+  138 ferry island, 158 with no dense-week history, no coordinates, or closed.
+  Rebuilt silver and features first (8 dense weeks now, was 7; 171,793 feature
+  events, 8,070 stations, through 2026-08-10). 16.7% of compared E10 stations
+  sit more than 3p above their peers.
+  Signal 2 genuinely reorders: about 70% of the worst decile matches a plain
+  Signal 1 ranking, so roughly 230 stations per fuel move in or out once local
+  circumstances are accounted for. That is the evidence it earns its place.
+  UNVERIFIED, flag on next pickup: data/gold/app_data.parquet was committed by
+  hand this once (schema change, and CI cannot rebuild while collection is
+  down), against the usual "gold is CI-owned" rule. refresh-signal2.yml has
+  never actually run; its first scheduled fire is Monday 2026-08-17 08:00 UTC.
+- KNOWN WRINKLE (2026-08-11), not fixed, level-only impact: in training the
+  wholesale regime features are a within-week MEAN across events, while
+  build_signal2.py scores today with a single wholesale week's value. Slightly
+  different quantities, and it makes the "outside training range" verdict look
+  worse than it is. Only affects the level, which Decision 9 demeans away, so
+  it was left alone deliberately rather than missed.
 - EDA review done 2026-07-03. Note: project started ~2026-06-24, so the
   plan's "week N" schedule does not map to calendar weeks; actual pace is
   much faster.
@@ -525,30 +599,29 @@ What this means:
   pricing. Revisit the buffer and the constant basis alongside the Signal 2
   review, not separately.
 
-## PICK UP HERE (as of 2026-08-02, evening)
-Collection is running from the Android phone in Cyprus; the app is live and
-correct. Nothing is on fire. The Signal 2 review that had blocked everything
-since 2026-07-08 is DONE: reviewed, accepted, both fuels run, decisions 5 to 7
-recorded above. In priority order:
-1. Confirm Termux cron fires unattended. NOT yet observed: the crontab is the
-   Mon-Fri 4x/day one, and 2026-08-02 was a Sunday, so the only run so far was
-   the manual one. First real proof is Monday 2026-08-03 around 09:00 EEST.
-   Check whether a snapshot appears with nobody touching the phone. If it does
-   not, that is the first thing to fix and everything else can wait.
-2. Wire Signal 2 into gold and the app. Both fuels have out-of-fold
-   predictions in data/features/signal2_cv_{fuel}.parquet, including the
-   affluence-blind twin (pred_model_nohp) that the app is meant to surface
-   alongside the main ranking (Decision 6).
-3. Decide the next-week-transfer extrapolation fix (see the OPEN item above,
-   the one where diesel lost to a regional median). Probably wait for more
-   market regimes rather than change the target now.
-4. Decide on the gold-rebuild trigger fix and the app staleness banner (see
-   the other OPEN item above). Small, but it is a real structural gap.
-5. Optional, cheap, high value if it pays off: re-test cloud collection now that
+## PICK UP HERE (as of 2026-08-11)
+Signal 2 is IN THE APP. Collection is the only thing needing attention.
+1. COLLECTION IS DOWN, and this is the live problem. Termux cron is PROVEN: it
+   fired unattended 4x/day Mon-Fri from 2026-08-03 through 08-07 and again
+   08-10, exactly on schedule, so that question from the last pickup is
+   answered yes. Then it stopped. Last snapshot 2026-08-10T11:03Z; the 08-10
+   16:30 EEST run and all four runs on Tuesday 08-11 are missing, about 30
+   hours silent as of 20:00 EEST. Check in this order: VPN tunnel up (the
+   silent-403 failure mode), phone on and online, Termux not killed by Android
+   battery management, pushes not being rejected (the 2026-07-13 failure).
+2. Decide the gold-rebuild trigger fix and the app staleness banner (OPEN item
+   above). Note the coupling got worse: with collection down, gold does not
+   reprice, so the app's peer comparisons and fair prices both freeze on
+   2026-07-27 wholesale.
+3. Decide the next-week-transfer extrapolation fix (OPEN item above, where
+   diesel lost to a regional median). Probably wait for more market regimes.
+   Related: the app-side workaround for the same defect is already in
+   (Decision 9 demeaning), so this is now about the model, not the app.
+4. Optional, cheap, high value if it pays off: re-test cloud collection now that
    the data-centre-IP premise is known to be false. Would remove the project's
    biggest architectural constraint.
-Still after all that: rocket-and-feathers module, then the write-up. Note the
-rocket-and-feathers module now has a specific job it did not have before:
-Decision 7 knowingly let Signal 2 treat widening margins on rising wholesale as
-expected, and that needs cross-referencing when the asymmetry is measured.
+Then: rocket-and-feathers module, then the write-up. The rocket-and-feathers
+module has a specific job it did not have before: Decision 7 knowingly let
+Signal 2 treat widening margins on rising wholesale as expected, and that needs
+cross-referencing when the asymmetry is measured.
 

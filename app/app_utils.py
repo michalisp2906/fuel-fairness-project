@@ -25,6 +25,11 @@ POLE_LOW = (42, 120, 214)      # #2a78d6 blue: below fair price
 MIDPOINT = (195, 194, 183)     # #c3c2b7 neutral gray: at fair price
 POLE_HIGH = (227, 73, 72)      # #e34948 red: above fair price
 SCALE_MAX_PPL = 10.0           # color scale clamps at +/- 10p overcharge
+# Peer comparisons are demeaned, so they sit in a much narrower band than
+# Signal 1 (p10 to p90 is roughly -5p to +5p). Reusing the 10p scale would
+# wash the whole map out to gray.
+SCALE_MAX_PEER_PPL = 6.0
+UNSCORED = (138, 138, 133)     # #8a8a85: deliberately not peer-compared
 
 FLAG_BUFFER_PPL = 3.0          # Signal 1 flag threshold, must match build_features.py
 
@@ -45,7 +50,31 @@ def load_app_data() -> pd.DataFrame:
     df["price_str"] = df["price_ppl"].map(lambda v: f"{v:.1f}p")
     df["fair_price_str"] = df["fair_price_ppl"].map(lambda v: f"{v:.1f}p")
     df["overcharge_str"] = df["overcharge_ppl"].map(lambda v: f"{v:+.1f}p")
+
+    # Signal 2, the peer comparison. Absent only if the gold table predates it
+    # or build_signal2.py has never run, in which case the app degrades to
+    # Signal 1 rather than failing.
+    if "signal2_ppl" not in df.columns:
+        df["signal2_ppl"] = pd.NA
+        df["excused_by_affluence_ppl"] = pd.NA
+        df["signal2_decile"] = pd.NA
+        df["signal2_status"] = "not scored yet"
+
+    # Stored as a delta to keep the committed table small: the affluence-blind
+    # comparison is the peer score plus what house prices excused.
+    df["signal2_nohp_ppl"] = df["signal2_ppl"] + df["excused_by_affluence_ppl"]
+    df["signal2_str"] = df["signal2_ppl"].map(
+        lambda v: "not compared" if pd.isna(v) else f"{v:+.1f}p"
+    )
+    df["excused_str"] = df["excused_by_affluence_ppl"].map(
+        lambda v: "" if pd.isna(v) else f"{v:+.1f}p"
+    )
     return df
+
+
+def peer_note(status: pd.Series) -> pd.Series:
+    """Short reason for the stations Signal 2 deliberately does not compare."""
+    return status.astype("string").str.replace("not compared: ", "", regex=False)
 
 
 def data_as_of(df: pd.DataFrame) -> str:
