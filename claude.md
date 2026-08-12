@@ -577,10 +577,41 @@ What this means:
   Signal 2 genuinely reorders: about 70% of the worst decile matches a plain
   Signal 1 ranking, so roughly 230 stations per fuel move in or out once local
   circumstances are accounted for. That is the evidence it earns its place.
-  UNVERIFIED, flag on next pickup: data/gold/app_data.parquet was committed by
-  hand this once (schema change, and CI cannot rebuild while collection is
-  down), against the usual "gold is CI-owned" rule. refresh-signal2.yml has
-  never actually run; its first scheduled fire is Monday 2026-08-17 08:00 UTC.
+  data/gold/app_data.parquet was committed by hand this once (schema change,
+  and CI could not rebuild while collection was down), against the usual "gold
+  is CI-owned" rule.
+  VERIFIED 2026-08-12: refresh-signal2.yml was run manually and succeeded, and
+  it committed NOTHING. That is the result to want. The runner rebuilt silver,
+  features, Signal 2, and gold from scratch on Linux and produced a gold table
+  identical to the hand-committed one, so the pipeline reproduces across
+  machines and the manual commit is confirmed correct. First scheduled fire is
+  still Monday 2026-08-17 08:00 UTC.
+- COLLECTION OUTAGE 2026-08-10 to 08-11, about 32 hours, cause not recorded.
+  Last snapshot before the gap 2026-08-10T11:03Z, then the 08-10 16:30 EEST run
+  and all four runs on Tuesday 08-11 are missing. Collection resumed with an
+  off-schedule snapshot at 2026-08-11T19:42Z (the timing says someone kicked it
+  by hand, not cron) and has been back on cadence since, 08-12 at 06:11Z and
+  08:41Z. Whatever the cause was, it was NOT diagnosed, so treat a repeat as
+  likely and check the VPN-down silent-403 path first.
+  FOR THE WRITE-UP: this is a real hole in the sampling record, alongside the
+  documented weekday-only gap. Do not describe collection as continuous.
+- DONE (2026-08-11/12): all four workflows moved to Node 24 action runtimes.
+  GitHub is retiring Node 20 and was force-running the old actions on 24 with a
+  warning on every run. Now on actions/checkout@v7, astral-sh/setup-uv@v9.0.0,
+  actions/setup-python@v6, actions/upload-artifact@v6, each confirmed to
+  declare runs.using: node24 rather than assumed (upload-artifact@v5 is still
+  node20, so the obvious one-major bump would not have fixed it).
+  setup-uv v9 flips prune-cache to false, so refresh-signal2, refresh-wholesale
+  and rebuild-app-data set it back to true explicitly to stop the repo's shared
+  Actions cache filling with old uv downloads.
+  LESSON, cost half a day of app staleness: the first attempt used
+  `astral-sh/setup-uv@v9`, which does not resolve. That repo publishes floating
+  major tags only up to v7; v8 and v9 exist as full semver tags ONLY. Every
+  rebuild-app-data run failed at "Unable to resolve action", so the three
+  snapshots that landed on 08-11 and 08-12 did not reprice the app until the
+  pin was corrected. The 404 on the v9 action.yml was visible before the change
+  shipped and was misread as a URL quirk. Verify a tag exists, do not infer it
+  from a release number.
 - KNOWN WRINKLE (2026-08-11), not fixed, level-only impact: in training the
   wholesale regime features are a within-week MEAN across events, while
   build_signal2.py scores today with a single wholesale week's value. Slightly
@@ -599,27 +630,28 @@ What this means:
   pricing. Revisit the buffer and the constant basis alongside the Signal 2
   review, not separately.
 
-## PICK UP HERE (as of 2026-08-11)
-Signal 2 is IN THE APP. Collection is the only thing needing attention.
-1. COLLECTION IS DOWN, and this is the live problem. Termux cron is PROVEN: it
-   fired unattended 4x/day Mon-Fri from 2026-08-03 through 08-07 and again
-   08-10, exactly on schedule, so that question from the last pickup is
-   answered yes. Then it stopped. Last snapshot 2026-08-10T11:03Z; the 08-10
-   16:30 EEST run and all four runs on Tuesday 08-11 are missing, about 30
-   hours silent as of 20:00 EEST. Check in this order: VPN tunnel up (the
-   silent-403 failure mode), phone on and online, Termux not killed by Android
-   battery management, pushes not being rejected (the 2026-07-13 failure).
-2. Decide the gold-rebuild trigger fix and the app staleness banner (OPEN item
-   above). Note the coupling got worse: with collection down, gold does not
-   reprice, so the app's peer comparisons and fair prices both freeze on
-   2026-07-27 wholesale.
-3. Decide the next-week-transfer extrapolation fix (OPEN item above, where
+## PICK UP HERE (as of 2026-08-12)
+Signal 2 is IN THE APP, collection is running again, and CI is fixed and has
+caught up. Nothing is on fire. rebuild-app-data failed on every snapshot push
+from 2026-08-11T19:42Z until the setup-uv pin landed (7087bbc), then ran clean
+and repriced the app from the whole backlog (78f8867, 2026-08-12T09:47Z), so
+the live table is current and the Node 24 versions are proven in CI.
+Useful to know if it happens again: re-running a FAILED push-triggered run does
+NOT help, because it uses the workflow file from its own commit, which still
+carries the bug. Push the fix and let the next snapshot trigger it, or use
+workflow_dispatch.
+1. Decide the gold-rebuild trigger fix and the app staleness banner (OPEN item
+   above). The last two days made the case twice over: gold froze once because
+   collection stopped, then again because CI could not run. A "prices as of
+   DATE" banner would have made both visible without anyone digging in Actions.
+2. Decide the next-week-transfer extrapolation fix (OPEN item above, where
    diesel lost to a regional median). Probably wait for more market regimes.
    Related: the app-side workaround for the same defect is already in
    (Decision 9 demeaning), so this is now about the model, not the app.
-4. Optional, cheap, high value if it pays off: re-test cloud collection now that
+3. Optional, cheap, high value if it pays off: re-test cloud collection now that
    the data-centre-IP premise is known to be false. Would remove the project's
-   biggest architectural constraint.
+   biggest architectural constraint, and would also remove the phone as a
+   single point of failure, which the 08-10 outage just demonstrated.
 Then: rocket-and-feathers module, then the write-up. The rocket-and-feathers
 module has a specific job it did not have before: Decision 7 knowingly let
 Signal 2 treat widening margins on rising wholesale as expected, and that needs
