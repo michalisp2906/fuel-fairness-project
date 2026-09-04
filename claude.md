@@ -40,20 +40,26 @@ picture and phase order.
 - No corporate filler.
 
 ## Environment
-- THROUGH AUGUST 2026: all development is on the **MacBook only** (user is in
-  Cyprus, Windows PC is off). Assume bash/zsh, never PowerShell, until the user
-  says otherwise. Collection runs on the Android phone, not the PC.
-- Collection (`fuel_snapshot.py`) normally runs on the Windows PC via Task
-  Scheduler. It requires a **UK-geolocating** connection (see "API access is
-  geo-blocked" below). An Android phone in Termux is a proven second collector.
-- Three machines now: Windows PC (primary collector), MacBook Pro (analysis),
-  Android phone (backup collector, see `docs/termux_collection.md`).
+- FROM SEPTEMBER 2026: the user is back and the **Windows PC** is the working
+  machine again, for both collection and development. Default to PowerShell
+  syntax unless you can see you are on the Mac. August 2026 was the exception
+  (user in Cyprus, PC off, collection on the Android phone over a UK VPN); that
+  arrangement has ENDED, see the handover entry in Current status.
+- Collection (`fuel_snapshot.py`) runs on the Windows PC via Task Scheduler.
+  It requires a **UK-geolocating** connection (see "API access is geo-blocked"
+  below). The PC's own connection satisfies this with no VPN, as it did from
+  June through July. The VPN is a travel-only requirement.
+- Three machines: Windows PC (collector and main development box), MacBook Pro
+  (analysis, and whatever travels), Android phone (proven backup collector for
+  travel, see `docs/termux_collection.md`).
 - Windows PC: Windows, PowerShell (not bash). Terminal commands must be PowerShell
   syntax. Runs collection plus any development work done there.
 - MacBook Pro: zsh/bash. Used for analysis and development (`build_silver.py`,
   `eda.ipynb`, modelling). Has no `.env`, so it cannot run live collection; it
   works from the raw snapshots synced via git. Terminal commands here are bash/zsh,
-  not PowerShell.
+  not PowerShell. `data/silver/` and `data/features/` are gitignored, so a
+  machine switch means re-running build_silver.py then build_features.py before
+  any modelling work. `data/gold/` is committed and arrives with the pull.
 - Python in the project virtual environment at `.venv` (machine-local, not synced).
 - Editor is VS Code.
 - Dependencies declared in `pyproject.toml`, managed with `uv`. Run `uv sync --group notebook` to reproduce the environment on either machine. `uv.lock` is committed.
@@ -116,9 +122,12 @@ What this means:
   now known to be false: see "API access is GEO-blocked" above. Treat cloud
   collection as UNTESTED rather than impossible.
 - Known limitation: PC runs weekdays ~9 to 5, so collection misses nights, weekends,
-  and holidays. This is a deliberate, documented sampling gap. The phone is always
-  on and could close it (2-hourly, 7 days); if the cadence changes, record it in
-  the write-up so the sampling record stays honest.
+  and holidays. This is a deliberate, documented sampling gap, in force again
+  from 2026-09-03 now that the PC is the collector. August 2026 did not close
+  it either: the phone ran the same four weekday slots rather than the 2-hourly
+  7-day cadence it is capable of, so the gap is continuous across the whole
+  record so far. If the cadence ever does change, record it in the write-up so
+  the sampling record stays honest.
 
 ## Guardrails
 - Credentials live ONLY in `.env` (local) and never in code. `.env` MUST stay
@@ -525,11 +534,13 @@ What this means:
   its worst decile); (4) week-over-week Spearman stability of the
   leftover score (actual minus predicted), preliminary while history
   is thin, grows into a stability curve.
-- RESOLVED (2026-08-02): the August collection gap. User is in Cyprus for
-  August 2026 with the Windows PC off. Collection now runs from the Android
-  phone in Termux, over a commercial VPN with a UK exit. Verified working end
-  to end: snapshot -> GitHub -> CI rebuild -> live app, with the CI rebuild
-  landing 70 seconds after the push. See `docs/termux_collection.md`.
+- RESOLVED (2026-08-02), and now CLOSED (2026-09-03, collection back on the
+  PC): the August collection gap. User was in Cyprus for August 2026 with the
+  Windows PC off. Collection ran from the Android phone in Termux, over a
+  commercial VPN with a UK exit. Verified working end to end: snapshot ->
+  GitHub -> CI rebuild -> live app, with the CI rebuild landing 70 seconds
+  after the push. See `docs/termux_collection.md`, which stays relevant as the
+  travel playbook.
   - The wholesale refresh half of this problem was solved separately by
     `.github/workflows/refresh-wholesale.yml` (Mondays 07:00 UTC), so it no
     longer depends on any machine being on.
@@ -612,6 +623,31 @@ What this means:
   pin was corrected. The 404 on the v9 action.yml was visible before the change
   shipped and was misread as a URL quirk. Verify a tag exists, do not infer it
   from a release number.
+- HANDOVER BACK TO THE PC (2026-09-03). The August phone arrangement is over.
+  Collection now runs on the Windows PC via Task Scheduler again, and the phone
+  reverts to travel backup. Read off the snapshot times, which change shape
+  cleanly on 09-03:
+  * through 2026-08-26, phone in Cyprus: 06:0x, 08:4x, 11:0x, 13:3x UTC, i.e.
+    the Mon-Fri 09:00 / 11:30 / 14:00 / 16:30 schedule in EEST (UTC+3).
+  * from 2026-09-03, PC: 08:46, 10:32, 13:04, 15:33 UTC, i.e. the same
+    four-slot weekday schedule read in UK local time (UTC+1), with the first
+    run of the day landing about 45 minutes late, most likely Task Scheduler
+    catching up a start missed while the machine was off or asleep.
+  ASSUMPTION, not confirmed by the user: the UK-local reading of those times is
+  inferred from the timestamps alone. If the PC is not on UK time, this entry
+  and the schedule note in Current status both need correcting.
+- COLLECTION GAP 2026-08-27 to 2026-09-02, the travel-home week. Far bigger
+  than the 08-10 outage and a different kind: not a failure, just nobody
+  collecting during the move. Nothing at all on 08-27, 08-28, 08-30, 09-01
+  daytime; four ad-hoc snapshots at odd hours (08-29 22:35Z, 08-31 12:47Z and
+  13:02Z, 09-01 19:51Z, 09-02 18:51Z) and no weekday pattern until the PC took
+  over on 09-03.
+  FOR THE WRITE-UP: the sampling record now has three documented holes, the
+  standing weekday-only gap, the 32-hour outage on 08-10, and this week-long
+  handover gap. Any week-level modelling that straddles late August must treat
+  those weeks as sparse, the same way MIN_STATIONS_PER_WEEK already drops thin
+  weeks in signal2_validation.py. Check whether the dense-week count changed
+  before quoting Signal 2 numbers again.
 - KNOWN WRINKLE (2026-08-11), not fixed, level-only impact: in training the
   wholesale regime features are a within-week MEAN across events, while
   build_signal2.py scores today with a single wholesale week's value. Slightly
@@ -630,15 +666,18 @@ What this means:
   pricing. Revisit the buffer and the constant basis alongside the Signal 2
   review, not separately.
 
-## PICK UP HERE (as of 2026-08-12)
-Signal 2 is IN THE APP, collection is running again, and CI is fixed and has
-caught up. Nothing is on fire. rebuild-app-data failed on every snapshot push
-from 2026-08-11T19:42Z until the setup-uv pin landed (7087bbc), then ran clean
-and repriced the app from the whole backlog (78f8867, 2026-08-12T09:47Z), so
-the live table is current and the Node 24 versions are proven in CI.
-Useful to know if it happens again: re-running a FAILED push-triggered run does
-NOT help, because it uses the workflow file from its own commit, which still
-carries the bug. Push the fix and let the next snapshot trigger it, or use
+## PICK UP HERE (as of 2026-09-04)
+Signal 2 is IN THE APP, collection is back on the Windows PC and running to
+schedule, and CI is healthy on the Node 24 action versions. Nothing is on fire.
+Work resumes on the PC, so PowerShell, and `data/silver/` and `data/features/`
+need rebuilding there before any modelling (both gitignored; run build_silver.py
+then build_features.py). Roughly five weeks of new snapshots have accumulated
+since the Signal 2 numbers below were measured, so anything quoted from
+2026-08-11 is now understated in sample size and worth re-running before it goes
+in the write-up.
+Useful if CI ever breaks again: re-running a FAILED push-triggered run does NOT
+help, because it uses the workflow file from its own commit, which still carries
+the bug. Push the fix and let the next snapshot trigger it, or use
 workflow_dispatch.
 1. Decide the gold-rebuild trigger fix and the app staleness banner (OPEN item
    above). The last two days made the case twice over: gold froze once because
