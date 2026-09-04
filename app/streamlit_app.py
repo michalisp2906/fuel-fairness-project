@@ -1,10 +1,11 @@
 """
 UK Fuel Fairness: map page.
 
-Every UK petrol station, coloured by how far its current price sits from the
-cost-plus fair price (Signal 1). Blue = below fair, gray = at fair,
-red = above fair. This is deliberately NOT a cheapest-fuel finder: the map
-shows overcharging relative to costs, not raw price.
+Every UK petrol station, coloured either by how far its price sits from
+comparable stations (Signal 2, the default, centred on zero by construction)
+or from the cost-plus fair price (Signal 1). Blue = below, gray = level,
+red = above. This is deliberately NOT a cheapest-fuel finder: the map shows
+overcharging relative to costs and peers, not raw price.
 
 Run locally:
     .venv/Scripts/python.exe -m streamlit run app/streamlit_app.py
@@ -17,6 +18,8 @@ import pydeck as pdk
 import streamlit as st
 
 from app_utils import (
+    CMA_MARGIN_PPL,
+    FAIR_MARGIN_PPL,
     FLAG_BUFFER_PPL,
     GRADE_LABELS,
     MIDPOINT,
@@ -24,6 +27,7 @@ from app_utils import (
     POLE_LOW,
     SCALE_MAX_PEER_PPL,
     SCALE_MAX_PPL,
+    STRUCTURAL_OFFSET_PPL,
     UNSCORED,
     data_as_of,
     load_app_data,
@@ -33,9 +37,15 @@ from app_utils import (
 # The two things the map can colour by. Signal 1 is an absolute gap against a
 # cost-plus fair price; Signal 2 is relative to comparable stations and is
 # demeaned, so it always centres on zero by construction.
+#
+# The PEER view leads. Signal 1 remains the primary YES/NO flag, but it is
+# deliberately measured against a normative fair margin the current market
+# does not meet, so nearly every station sits above it and the map reads as a
+# wall of red that separates nothing. Signal 2 is centred by construction and
+# so uses the full colour range. Signal 1 is one click away and unchanged.
 COLOUR_MODES = {
-    "Vs fair price (cost-plus)": ("overcharge_ppl", SCALE_MAX_PPL, "above fair"),
     "Vs comparable stations": ("signal2_ppl", SCALE_MAX_PEER_PPL, "above peers"),
+    "Vs fair price (cost-plus)": ("overcharge_ppl", SCALE_MAX_PPL, "above fair"),
 }
 
 st.set_page_config(
@@ -195,6 +205,20 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
+if colour_col == "overcharge_ppl":
+    st.caption(
+        "**Most stations sit above the fair price, and that is the finding, "
+        "not a glitch.** The fair margin used here is "
+        f"{FAIR_MARGIN_PPL:.0f}p/litre, the CMA's pre-2022 baseline. The CMA "
+        f"reports the market currently runs at about {CMA_MARGIN_PPL:.1f}p. So "
+        "a station charging the typical margin still lands about "
+        f"{STRUCTURAL_OFFSET_PPL:.1f}p above the fair line, before any local "
+        "overcharging. Colour is deliberately not re-centred on the market "
+        "median: doing so would define the current market as fair by "
+        "assumption, which is the question the project exists to ask. Use "
+        "**Vs comparable stations** to separate stations from each other."
+    )
 
 if colour_col == "signal2_ppl":
     st.caption(

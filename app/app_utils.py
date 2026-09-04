@@ -24,7 +24,12 @@ GRADE_LABELS = {
 POLE_LOW = (42, 120, 214)      # #2a78d6 blue: below fair price
 MIDPOINT = (195, 194, 183)     # #c3c2b7 neutral gray: at fair price
 POLE_HIGH = (227, 73, 72)      # #e34948 red: above fair price
-SCALE_MAX_PPL = 10.0           # color scale clamps at +/- 10p overcharge
+# Signal 1 clamps at +/- 20p, not 10p. At 10p more than a tenth of petrol
+# stations pinned to identical maximum red, so the genuinely extreme stations
+# were indistinguishable from merely typical ones. The zero point stays at zero
+# deliberately: re-centring on the market median would excuse collective
+# overcharging, which the project explicitly refuses to do.
+SCALE_MAX_PPL = 20.0
 # Peer comparisons are demeaned, so they sit in a much narrower band than
 # Signal 1 (p10 to p90 is roughly -5p to +5p). Reusing the 10p scale would
 # wash the whole map out to gray.
@@ -32,6 +37,16 @@ SCALE_MAX_PEER_PPL = 6.0
 UNSCORED = (138, 138, 133)     # #8a8a85: deliberately not peer-compared
 
 FLAG_BUFFER_PPL = 3.0          # Signal 1 flag threshold, must match build_features.py
+
+FAIR_MARGIN_PPL = 7.0          # must match FAIR_MARGIN_PPL in build_features.py
+CMA_MARGIN_PPL = 10.7          # must match CMA_MARGIN_PPL in build_features.py
+
+# By construction, a station charging the CMA-observed market margin (10.7p)
+# rather than the model's fair margin (7.0p) lands this far above the fair
+# line, because fair price is a normative benchmark the current market does
+# not meet. Must match FAIR_MARGIN_PPL, CMA_MARGIN_PPL and VAT_RATE in
+# build_features.py. Used to explain the wall of red on the Signal 1 view.
+STRUCTURAL_OFFSET_PPL = (CMA_MARGIN_PPL - FAIR_MARGIN_PPL) * 1.20
 
 
 @st.cache_data

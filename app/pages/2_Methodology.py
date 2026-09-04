@@ -4,9 +4,63 @@ list of limitations.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
+import pandas as pd
 import streamlit as st
 
 st.set_page_config(page_title="Methodology", page_icon="⛽")
+
+CRF_PATH = Path(__file__).resolve().parents[2] / "data" / "analysis" / (
+    "rocket_feathers_crf.parquet"
+)
+CRF_LABELS = {"petrol": "Petrol (E10)", "diesel": "Diesel (B7)"}
+
+
+@st.cache_data
+def load_crf() -> pd.DataFrame | None:
+    """
+    Cumulative response functions from rocket_feathers.py.
+
+    Returns None rather than raising if the file is absent, so the page still
+    renders on a clone that has not run the analysis yet. Committed to the
+    repo for the same reason data/gold is: the deployed app reads it from the
+    clone and cannot rebuild it.
+    """
+    if not CRF_PATH.exists():
+        return None
+    return pd.read_parquet(CRF_PATH)
+
+
+def render_crf_chart() -> None:
+    """Response to a 1p cost rise vs a 1p cost fall, plotted against each other."""
+    crf = load_crf()
+    if crf is None:
+        st.info("Pass-through analysis not available in this deployment.")
+        return
+
+    label = st.radio(
+        "Fuel", list(CRF_LABELS.values()), horizontal=True, key="crf_fuel"
+    )
+    fuel = {v: k for k, v in CRF_LABELS.items()}[label]
+    d = crf[crf["fuel"] == fuel].set_index("week")
+
+    st.line_chart(
+        d[["response_to_rise_ppl", "response_to_fall_ppl"]].rename(columns={
+            "response_to_rise_ppl": "After a 1p cost RISE",
+            "response_to_fall_ppl": "After a 1p cost FALL",
+        }),
+        height=320,
+        color=["#e34948", "#2a78d6"],
+    )
+    peak = d.loc[d["gap_ppl"].abs().idxmax()]
+    st.caption(
+        f"Pence per litre passed through, week by week, after a permanent 1p "
+        f"move in wholesale cost. Widest gap: **{peak.gap_ppl:+.2f}p** at week "
+        f"{int(d['gap_ppl'].abs().idxmax())}. A gap above zero means rises are "
+        "passed on more fully than falls at that horizon."
+    )
+
 
 st.title("Methodology")
 
@@ -112,6 +166,51 @@ is reported relative to the current market rather than as an absolute figure.
 The relative ranking is unaffected, because that error applies equally to
 every station. This is a limitation of a young dataset, and it shrinks as
 collection continues.
+
+## Do prices rise faster than they fall?
+
+This is the "rockets and feathers" question: when wholesale costs go up, pump
+prices are widely believed to follow quickly, but when costs come down, prices
+are believed to drift back slowly. It is a separate piece of analysis from the
+two signals above, run on 444 weeks of national data from 2018 to 2026 rather
+than on this project's own shorter history.
+
+The finding is that the **immediate** response is even-handed. A cost rise and
+a cost fall of the same size get passed on at the same speed in the first few
+weeks. The difference shows up later, in how margins are corrected:
+
+- When a retail margin is **thinner** than normal, it is rebuilt at a rate that
+  is statistically clear (both fuels).
+- When a margin is **fatter** than normal, the rate at which competition erodes
+  it cannot be distinguished from zero.
+
+The chart below traces what happens to pump prices after a permanent 1p change
+in wholesale cost, following a rise and a fall separately. The gap between the
+two lines is the asymmetry, and it peaks at about 0.19p per litre for petrol
+and 0.24p for diesel, roughly ten to eleven weeks after the cost moves.
+""")
+
+render_crf_chart()
+
+st.markdown("""
+### How strongly to read this
+
+Cautiously, and the reason is worth stating. The direction is consistent across
+both fuels and every robustness check we ran, and for petrol in the post-2022
+period the difference between the two correction speeds is statistically
+significant. But across the full sample that difference is **not** statistically
+established.
+
+In particular, "the thin-margin effect is significant and the fat-margin one is
+not" is a weaker argument than it sounds, because a difference in significance
+is not itself a significant difference. We report the pattern because the
+direction is consistent and economically meaningful, not because the full-sample
+test settles it.
+
+One further caveat that runs the other way: the wholesale price used here is a
+US futures proxy, and measurement error in a proxy pulls estimates toward zero.
+That biases this particular test **toward finding nothing**, so the effect that
+does show up is more likely understated than overstated.
 
 ## Data sources
 

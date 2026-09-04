@@ -1,0 +1,242 @@
+{
+  "E10": {
+    "grade": "E10",
+    "fitted": true,
+    "n_stations": 7842,
+    "n_weeks": 11,
+    "week_start": "2026-06-15",
+    "week_end": "2026-08-24",
+    "impact_sum_pos": 0.5012971500926525,
+    "impact_sum_neg": -0.5217077229372373,
+    "groups": [
+      {
+        "group": "All stations",
+        "n_stations": 7842,
+        "n_obs": 57995,
+        "lambda_fat": -0.4237667579159502,
+        "p_fat": 1.432159765154327e-204,
+        "lambda_thin": -0.4233533705421998,
+        "p_thin": 0.0,
+        "ratio_thin_over_fat": 0.9990244931533011,
+        "equality_p": 0.9821988760684512,
+        "feathers_pattern": false
+      },
+      {
+        "group": "All (non-motorway)",
+        "n_stations": 7679,
+        "n_obs": 56785,
+        "lambda_fat": -0.4033023189584532,
+        "p_fat": 2.938482075039596e-173,
+        "lambda_thin": -0.4278359515038073,
+        "p_thin": 0.0,
+        "ratio_thin_over_fat": 1.060831865804078,
+        "equality_p": 0.19736247479465815,
+        "feathers_pattern": true
+      },
+      {
+        "group": "Fewest rivals (<=4 in 5km)",
+        "n_stations": 2652,
+        "n_obs": 19691,
+        "lambda_fat": -0.4259579869427684,
+        "p_fat": 2.317138826772231e-81,
+        "lambda_thin": -0.44778179535028867,
+        "p_thin": 4.5939127011653957e-219,
+        "ratio_thin_over_fat": 1.0512346500746623,
+        "equality_p": 0.4842384579603016,
+        "feathers_pattern": true
+      },
+      {
+        "group": "Middle (4-12 in 5km)",
+        "n_stations": 2526,
+        "n_obs": 18705,
+        "lambda_fat": -0.3898155316666686,
+        "p_fat": 5.149376115287094e-63,
+        "lambda_thin": -0.41440286082990174,
+        "p_thin": 0.0,
+        "ratio_thin_over_fat": 1.0630742676109113,
+        "equality_p": 0.40370922028280387,
+        "feathers_pattern": true
+      },
+      {
+        "group": "Most rivals (>12 in 5km)",
+        "n_stations": 2501,
+        "n_obs": 18389,
+        "lambda_fat": -0.4340023073787599,
+        "p_fat": 3.241664686859643e-45,
+        "lambda_thin": -0.4141764707970244,
+        "p_thin": 9.766405572278138e-287,
+        "ratio_thin_over_fat": 0.9543185917570867,
+        "equality_p": 0.6014694578822515,
+        "feathers_pattern": false
+      },
+      {
+        "group": "Rural",
+        "n_stations": 1863,
+        "n_obs": 13849,
+        "lambda_fat": -0.40203012765908,
+        "p_fat": 2.3011073206768943e-57,
+        "lambda_thin": -0.4607329611110724,
+        "p_thin": 6.674394988718559e-147,
+        "ratio_thin_over_fat": 1.1460160057998743,
+        "equality_p": 0.1042357976906201,
+        "feathers_pattern": true
+      },
+      {
+        "group": "Urban",
+        "n_stations": 5338,
+        "n_obs": 39359,
+        "lambda_fat": -0.42808107784661376,
+        "p_fat": 8.320043767603589e-113,
+        "lambda_thin": -0.403215116864335,
+        "p_thin": 0.0,
+        "ratio_thin_over_fat": 0.941912963994198,
+        "equality_p": 0.29497740357489877,
+        "feathers_pattern": false
+      },
+      {
+        "group": "Supermarket",
+        "n_stations": 2248,
+        "n_obs": 16882,
+        "lambda_fat": -0.39762603501504684,
+        "p_fat": 6.410045497186454e-49,
+        "lambda_thin": -0.429634491090082,
+        "p_thin": 6.359496013121883e-293,
+        "ratio_thin_over_fat": 1.080498894077255,
+        "equality_p": 0.3514416399253336,
+        "feathers_pattern": true
+      },
+      {
+        "group": "Motorway",
+        "n_stations": 163,
+        "n_obs": 1210,
+        "lambda_fat": -0.8833478242521028,
+        "p_fat": 3.1075836232412085e-47,
+        "lambda_thin": -0.23817017586424888,
+        "p_thin": 7.992506935911147e-08,
+        "ratio_thin_over_fat": 0.26962219108412766,
+        "equality_p": 6.786326644884755e-12,
+        "feathers_pattern": false
+      }
+    ]
+  },
+  "B7_STANDARD": {
+    "grade": "B7_STANDARD",
+    "fitted": true,
+    "n_stations": 7924,
+    "n_weeks": 10,
+    "week_start": "2026-06-22",
+    "week_end": "2026-08-24",
+    "impact_sum_pos": -1.0049360443066386,
+    "impact_sum_neg": 1.2253260569022024,
+    "groups": [
+      {
+        "group": "All stations",
+        "n_stations": 7924,
+        "n_obs": 55323,
+        "lambda_fat": -0.45733830933649433,
+        "p_fat": 2.6774953249628415e-203,
+        "lambda_thin": -0.6897656326078112,
+        "p_thin": 0.0,
+        "ratio_thin_over_fat": 1.5082174804217081,
+        "equality_p": 7.823551722063121e-42,
+        "feathers_pattern": true
+      },
+      {
+        "group": "All (non-motorway)",
+        "n_stations": 7760,
+        "n_obs": 54175,
+        "lambda_fat": -0.440468474049879,
+        "p_fat": 5.450171226025873e-187,
+        "lambda_thin": -0.6914472438062468,
+        "p_thin": 0.0,
+        "ratio_thin_over_fat": 1.5697996214093333,
+        "equality_p": 3.3609724674796516e-47,
+        "feathers_pattern": true
+      },
+      {
+        "group": "Fewest rivals (<=4 in 5km)",
+        "n_stations": 2718,
+        "n_obs": 18944,
+        "lambda_fat": -0.44540276079206925,
+        "p_fat": 5.5385015824653285e-71,
+        "lambda_thin": -0.6698941200706603,
+        "p_thin": 0.0,
+        "ratio_thin_over_fat": 1.5040187871295931,
+        "equality_p": 2.9377596662719486e-15,
+        "feathers_pattern": true
+      },
+      {
+        "group": "Middle (4-12 in 5km)",
+        "n_stations": 2542,
+        "n_obs": 17780,
+        "lambda_fat": -0.4406424214576542,
+        "p_fat": 1.4191914915042183e-60,
+        "lambda_thin": -0.6878329623485269,
+        "p_thin": 0.0,
+        "ratio_thin_over_fat": 1.5609776291469197,
+        "equality_p": 3.2328278876208666e-15,
+        "feathers_pattern": true
+      },
+      {
+        "group": "Most rivals (>12 in 5km)",
+        "n_stations": 2500,
+        "n_obs": 17451,
+        "lambda_fat": -0.43276501495073144,
+        "p_fat": 3.4203440170064897e-78,
+        "lambda_thin": -0.7555509468898294,
+        "p_thin": 0.0,
+        "ratio_thin_over_fat": 1.7458688220808372,
+        "equality_p": 1.875610922114196e-33,
+        "feathers_pattern": true
+      },
+      {
+        "group": "Rural",
+        "n_stations": 1907,
+        "n_obs": 13313,
+        "lambda_fat": -0.4460752728003743,
+        "p_fat": 1.9843390055873927e-82,
+        "lambda_thin": -0.6437265025737301,
+        "p_thin": 0.0,
+        "ratio_thin_over_fat": 1.4430894107457237,
+        "equality_p": 2.2707228316679747e-13,
+        "feathers_pattern": true
+      },
+      {
+        "group": "Urban",
+        "n_stations": 5341,
+        "n_obs": 37326,
+        "lambda_fat": -0.4113952829357055,
+        "p_fat": 7.24014375858832e-110,
+        "lambda_thin": -0.7102696347428545,
+        "p_thin": 0.0,
+        "ratio_thin_over_fat": 1.7264894961225365,
+        "equality_p": 1.572160272760748e-48,
+        "feathers_pattern": true
+      },
+      {
+        "group": "Supermarket",
+        "n_stations": 2246,
+        "n_obs": 15669,
+        "lambda_fat": -0.45628891978902014,
+        "p_fat": 5.156726591280555e-32,
+        "lambda_thin": -0.721948619909708,
+        "p_thin": 0.0,
+        "ratio_thin_over_fat": 1.5822181705475649,
+        "equality_p": 2.9669550001290914e-09,
+        "feathers_pattern": true
+      },
+      {
+        "group": "Motorway",
+        "n_stations": 164,
+        "n_obs": 1148,
+        "lambda_fat": -1.1565943337168698,
+        "p_fat": 5.858103255548234e-28,
+        "lambda_thin": -0.7536252081185,
+        "p_thin": 3.987035931263484e-49,
+        "ratio_thin_over_fat": 0.6515899189101377,
+        "equality_p": 0.0019937948982766155,
+        "feathers_pattern": false
+      }
+    ]
+  }
+}

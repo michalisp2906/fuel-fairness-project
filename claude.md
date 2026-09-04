@@ -666,33 +666,131 @@ What this means:
   pricing. Revisit the buffer and the constant basis alongside the Signal 2
   review, not separately.
 
-## PICK UP HERE (as of 2026-09-04)
-Signal 2 is IN THE APP, collection is back on the Windows PC and running to
-schedule, and CI is healthy on the Node 24 action versions. Nothing is on fire.
-Work resumes on the PC, so PowerShell, and `data/silver/` and `data/features/`
-need rebuilding there before any modelling (both gitignored; run build_silver.py
-then build_features.py). Roughly five weeks of new snapshots have accumulated
-since the Signal 2 numbers below were measured, so anything quoted from
-2026-08-11 is now understated in sample size and worth re-running before it goes
-in the write-up.
+- DONE (2026-09-04): ROCKET-AND-FEATHERS MODULE, both stages. This was the
+  last outstanding modelling deliverable. statsmodels added to pyproject.
+  STAGE 1, national (`rocket_feathers.py`). Asymmetric ECM on DESNZ weekly
+  national pump prices vs the NYMEX proxy, 444 weeks 2018 to 2026, ex-tax
+  retail terms, Newey-West HAC errors, lag orders by BIC.
+  * Both fuels are I(1). Petrol cointegrates (p=0.0001); diesel sits right on
+    the boundary (p=0.0501), which is why the b=1 robustness variant exists.
+  * NO impact asymmetry in either fuel (petrol p=0.79, diesel p=0.82). The
+    immediate pass-through of a cost change is symmetric.
+  * FEATHERS PATTERN in both, in the ADJUSTMENT term: margin-too-thin reverts
+    significantly (petrol -0.0283 p=0.011, diesel -0.0458 p=0.009) while
+    margin-too-fat does NOT (both about -0.015, p=0.17).
+  * The equality test does not reject in the full sample (petrol p=0.44,
+    diesel p=0.20), so the claim is SUGGESTIVE, not conclusive. It DOES reject
+    for petrol post-2022 (p=0.03), the CMA-scrutiny era.
+  * Peak gap between the response to a rise and to a fall: 0.188p at week 10
+    (petrol), 0.241p at week 11 (diesel), per 1p of cost move.
+  * Robustness 6/6 petrol, 5/6 diesel across b=1, excl 2020-2022, 2022-onward,
+    and HAC 4/8/16. Excluding 2020-2022 makes the effect STRONGER, so it is
+    not a COVID or Ukraine artefact. Diesel's one miss is post-2022, where the
+    fat-margin term also turns significant, so both sides revert; the
+    magnitude gap persists (ratio still 2.4x).
+  STAGE 2, station panel (`rocket_feathers_panel.py`). Pooled asymmetric ECM
+  with station-mean ECT, clustered by station, split by competition group.
+  * The competition hypothesis (fewest rivals should feather MOST) is NOT
+    SUPPORTED for either fuel on current data. Petrol ratios are flat (~1.0);
+    diesel shows asymmetry but the MOST-competitive tercile has the HIGHEST
+    ratio, the wrong way round.
+  * TWO IDENTIFICATION PROBLEMS, found by checking, both documented in the
+    module docstring. (a) The ECT is demeaned within station over the same
+    ~10 weeks, so it mean-reverts mechanically (Nickell bias, order 1/T);
+    panel lambdas (-0.4 to -0.7) are about 10x the national ones and MUST NOT
+    be quoted beside them. (b) The window holds only 9 weekly cost changes
+    (petrol 6 up/3 down, diesel 5 up/4 down), so the sign split rests on a
+    handful of national weeks; diesel's asymmetry may be reading the single
+    August wholesale spike. The panel is scaffolding, not a result. The
+    national stage carries the finding.
+  CROSS-REFERENCE now closed: Decision 7 knowingly let Signal 2 treat widening
+  margins on rising wholesale as expected. Stage 1 shows the asymmetry lives in
+  the adjustment term, not the impact term, so Signal 2's national regime
+  features (which are level terms) do not absorb the measured effect.
+- WEEK-LABELLING TRAP FOUND (2026-09-04), no bug shipped, but read this before
+  joining the two weekly tables. `desnz_pump_prices.week_commencing` D covers
+  D..D+6. `wholesale_prices.date` W comes from resample("W-MON"), which labels
+  a bin by its RIGHT edge, so W covers W-6..W. They are BOTH Monday-dated and
+  mean OPPOSITE things. Joining them naively shifts every lag by a week.
+  rocket_feathers.load_national_panel() shifts wholesale back 7 days to fix it.
+  build_features.py is UNAFFECTED (it correctly treats wholesale as week-END
+  labelled for the 10-day as-of join). The comment on build_external.py line
+  153, "Resample to weekly (Monday) to align with DESNZ data", is misleading
+  and should be corrected if that file is touched.
+- DECISION 11 (2026-09-04): the map's DEFAULT colour mode is now "Vs
+  comparable stations", and the Signal 1 clamp widened from +/-10p to +/-20p.
+  Prompted by the user noticing the map was almost all red. Diagnosed rather
+  than assumed: on 2026-09-04 E10 median overcharge was +6.01p with 91% of
+  stations above zero, against diesel median -1.50p with 40% above. It
+  decomposes almost exactly: about 4.4p is STRUCTURAL, since fair price allows
+  a 7p margin while the basis is calibrated on the CMA's 10.7p, so a typical
+  station lands (10.7-7.0)*1.2 = 4.44p above the line by construction; the
+  remaining ~1.6p was cycle position (petrol wholesale had just fallen 67.3 to
+  64.1 while pumps sat still, i.e. feathers). At the old 10p clamp the 25th
+  percentile was already 39% saturated and >10% of stations pinned at identical
+  maximum red, so the map separated nothing.
+  REJECTED: re-centring the Signal 1 scale on the market median. It would have
+  fixed the visual instantly and it violates the locked rule "never excuse
+  collective overcharging" by defining the current market as fair. Instead the
+  Signal 1 view keeps its zero and gained a caption explaining the 4.4p
+  structural offset, so the wall of red is explained rather than softened.
+  New app_utils constants: FAIR_MARGIN_PPL, CMA_MARGIN_PPL,
+  STRUCTURAL_OFFSET_PPL (must match build_features.py).
+- DONE (2026-09-04): README.md written, the Phase 5 deliverable. Leads with the
+  CMA framing, then the three analyses, headline findings, the validation
+  tables, architecture, and a long honest-limitations section. It states the
+  proxy's ASYMMETRIC effect on the two analyses: Signal 1 compares levels so it
+  is exposed, while the ECM compares dynamics where a constant basis cancels
+  but measurement noise attenuates toward zero, biasing the asymmetry test
+  toward a NULL. So the positive feathers result is conservative.
+- SIGNAL 2 RE-MEASURED (2026-09-04) on 12 dense weeks, superseding the 8-week
+  numbers from 2026-08-11. MORE DATA MADE THE METRICS WORSE, and the current
+  ones are what the README quotes.
+    E10  57,443 station-weeks, 7,636 stations, 418 cells
+      LightGBM     MAE 2.98  MAE/wk 2.98  RMSE 3.98  Spearman 0.388  top-dec 22.8%
+      affl-blind   MAE 3.08  MAE/wk 3.08  RMSE 4.07  Spearman 0.303  top-dec 20.0%
+      regional     MAE 4.31  MAE/wk 3.03  RMSE 5.52  Spearman 0.323  top-dec 15.2%
+      zero         MAE 4.94  MAE/wk 3.33  RMSE 6.37
+    B7   62,184 station-weeks, 7,715 stations, 421 cells
+      LightGBM     MAE 3.58  MAE/wk 3.59  RMSE 4.67  Spearman 0.378  top-dec 22.3%
+      affl-blind   MAE 3.66  MAE/wk 3.66  RMSE 4.75  Spearman 0.307  top-dec 20.7%
+      regional     MAE 4.51  MAE/wk 3.64  RMSE 5.72  Spearman 0.295  top-dec 15.1%
+      zero         MAE 5.54  MAE/wk 3.97  RMSE 6.99
+  E10 Spearman fell 0.439 to 0.388 and top-decile 24.8% to 22.8%. The 8-week
+  figures were optimistic. Equity finding is unchanged and slightly stronger:
+  Spearman(house price, pence excused) 0.680, richest decile +1.52p, poorest
+  -1.22p, 123 of 643 worst-decile E10 stations there ONLY because house price
+  is in the model.
+  Rebuilt silver and features first: 220,459 feature events, 8,112 stations
+  (was 75,391 in the stale 2026-07-18 local build).
+
+## PICK UP HERE (as of 2026-09-04, later in the day)
+Phase 3 modelling is COMPLETE and Phase 5 has a README. Rocket-and-feathers is
+built at both levels, Signal 2 is re-measured on 12 weeks, and the map colour
+complaint is diagnosed and fixed. See the four 2026-09-04 entries above.
+NOTHING IS COMMITTED YET. New and changed files this session:
+  new:      rocket_feathers.py, rocket_feathers_panel.py, README.md,
+            data/analysis/ (3 files)
+  changed:  app/streamlit_app.py, app/app_utils.py, pyproject.toml, uv.lock,
+            claude.md
+All three app pages verified headless with AppTest, both colour modes.
+data/gold/ was NOT touched by hand, so CI stays the owner.
+Remaining before this project can be called finished:
+1. Review the rocket-and-feathers findings and decide how hard to push the
+   claim. Current framing is "suggestive, not conclusive" in the full sample
+   and significant for petrol post-2022. That is defensible; a bolder claim
+   is not, given the equality test.
+2. Decide whether the panel stage stays in the repo. It currently reports a
+   NULL and two identification problems. Keeping it is arguably the more
+   honest choice and makes a good interview answer (built it, checked it, and
+   it could not support the claim), but the caveats must stay loud.
+3. Wire the rocket-and-feathers result into the app, if wanted. The CRF
+   parquet (data/analysis/rocket_feathers_crf.parquet) is ready to plot on
+   the Methodology page. NOT done yet.
+4. Still open from before, neither blocking: the gold-rebuild trigger fix plus
+   a "prices as of DATE" staleness banner, and the Signal 2 next-week-transfer
+   extrapolation fix (probably wait for more market regimes).
 Useful if CI ever breaks again: re-running a FAILED push-triggered run does NOT
 help, because it uses the workflow file from its own commit, which still carries
 the bug. Push the fix and let the next snapshot trigger it, or use
 workflow_dispatch.
-1. Decide the gold-rebuild trigger fix and the app staleness banner (OPEN item
-   above). The last two days made the case twice over: gold froze once because
-   collection stopped, then again because CI could not run. A "prices as of
-   DATE" banner would have made both visible without anyone digging in Actions.
-2. Decide the next-week-transfer extrapolation fix (OPEN item above, where
-   diesel lost to a regional median). Probably wait for more market regimes.
-   Related: the app-side workaround for the same defect is already in
-   (Decision 9 demeaning), so this is now about the model, not the app.
-3. Optional, cheap, high value if it pays off: re-test cloud collection now that
-   the data-centre-IP premise is known to be false. Would remove the project's
-   biggest architectural constraint, and would also remove the phone as a
-   single point of failure, which the 08-10 outage just demonstrated.
-Then: rocket-and-feathers module, then the write-up. The rocket-and-feathers
-module has a specific job it did not have before: Decision 7 knowingly let
-Signal 2 treat widening margins on rising wholesale as expected, and that needs
-cross-referencing when the asymmetry is measured.
-
