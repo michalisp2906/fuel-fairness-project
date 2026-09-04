@@ -764,33 +764,45 @@ What this means:
   Rebuilt silver and features first: 220,459 feature events, 8,112 stations
   (was 75,391 in the stale 2026-07-18 local build).
 
-## PICK UP HERE (as of 2026-09-04, later in the day)
-Phase 3 modelling is COMPLETE and Phase 5 has a README. Rocket-and-feathers is
-built at both levels, Signal 2 is re-measured on 12 weeks, and the map colour
-complaint is diagnosed and fixed. See the four 2026-09-04 entries above.
-NOTHING IS COMMITTED YET. New and changed files this session:
-  new:      rocket_feathers.py, rocket_feathers_panel.py, README.md,
-            data/analysis/ (3 files)
-  changed:  app/streamlit_app.py, app/app_utils.py, pyproject.toml, uv.lock,
-            claude.md
-All three app pages verified headless with AppTest, both colour modes.
-data/gold/ was NOT touched by hand, so CI stays the owner.
-Remaining before this project can be called finished:
-1. Review the rocket-and-feathers findings and decide how hard to push the
-   claim. Current framing is "suggestive, not conclusive" in the full sample
-   and significant for petrol post-2022. That is defensible; a bolder claim
-   is not, given the equality test.
-2. Decide whether the panel stage stays in the repo. It currently reports a
-   NULL and two identification problems. Keeping it is arguably the more
-   honest choice and makes a good interview answer (built it, checked it, and
-   it could not support the claim), but the caveats must stay loud.
-3. Wire the rocket-and-feathers result into the app, if wanted. The CRF
-   parquet (data/analysis/rocket_feathers_crf.parquet) is ready to plot on
-   the Methodology page. NOT done yet.
-4. Still open from before, neither blocking: the gold-rebuild trigger fix plus
-   a "prices as of DATE" staleness banner, and the Signal 2 next-week-transfer
-   extrapolation fix (probably wait for more market regimes).
-Useful if CI ever breaks again: re-running a FAILED push-triggered run does NOT
-help, because it uses the workflow file from its own commit, which still carries
-the bug. Push the fix and let the next snapshot trigger it, or use
-workflow_dispatch.
+## PROJECT COMPLETE (closed out 2026-09-04)
+
+All five phases of `fuel-overcharging-project-plan.md` are done. The app is
+live, CI keeps it current without anyone touching it, and the write-up exists.
+Closing commit: ec78e73. Nothing is in flight and nothing is broken.
+
+What shipped:
+- Collection pipeline, Windows Task Scheduler, four weekday slots since
+  2026-06-24. Termux/phone remains the proven travel fallback.
+- Signal 1 (cost-plus fair price) and Signal 2 (peer comparison, cross-fitted,
+  affluence-scored both ways).
+- Rocket-and-feathers at two levels: national ECM (the result) and a station
+  panel (an honest null, kept deliberately with its identification problems
+  documented).
+- Live Streamlit app: map with two colour modes, station lookup, methodology
+  page including the pass-through chart.
+- README.md as the formal write-up, plus a plain-English explainer kept
+  OUTSIDE the repo at C:\Users\mpapa\Documents\fuel-project-plain-english-notes.html
+  (deliberately not in docs/, because this repo is PUBLIC).
+
+Left undone on purpose, both polish and neither blocking:
+- A "prices as of DATE" staleness banner in the app.
+- A LinkedIn or blog post.
+Also still open from earlier, and now unlikely to be worth doing: the
+gold-rebuild trigger fix (rebuild-app-data.yml fires only on data/raw pushes,
+so a wholesale-only refresh does not reprice the app), and the Signal 2
+next-week-transfer extrapolation fix, which was always waiting on more market
+regimes.
+
+IF YOU COME BACK TO THIS, read these first:
+1. The three sampling holes are real and must stay in any write-up: weekday-only
+   collection throughout, the 32-hour outage on 2026-08-10, and the week-long
+   handover gap 2026-08-27 to 2026-09-02.
+2. Signal 2 metrics DEGRADED when the sample grew from 8 to 12 dense weeks
+   (E10 Spearman 0.439 -> 0.388). Re-measure before quoting anything.
+3. The rocket-and-feathers claim is "suggestive, not conclusive" in the full
+   sample and significant for petrol post-2022 only. Do not upgrade that
+   wording without a test that actually rejects. A difference in significance
+   is not a significant difference.
+4. Collection is still running and CI is still committing to data/gold/. If you
+   want the repo to go quiet, disable the Task Scheduler job and the four
+   workflows; otherwise it will keep updating itself indefinitely.
